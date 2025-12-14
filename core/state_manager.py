@@ -405,8 +405,6 @@ class PeriodStateManager:
                 "phase_duration": phase.duration,
                 "current_day": day_in_cycle,  # 兼容旧版
                 "cycle_length": self.cycle_manager.current_cycle.total_days,  # 兼容旧版
-                "physical_impact": round(physical_impact, 2),
-                "psychological_impact": round(psychological_impact, 2),
                 "physical_level": physical_level,
                 "psychological_level": psychological_level,
                 "dysmenorrhea_level": dysmenorrhea_level,
@@ -431,8 +429,6 @@ class PeriodStateManager:
                 "phase_duration": 10,
                 "current_day": 10,
                 "cycle_length": 28,
-                "physical_impact": 0.1,
-                "psychological_impact": 0.1,
                 "physical_level": 2,
                 "psychological_level": 2,
                 "dysmenorrhea_level": 0,

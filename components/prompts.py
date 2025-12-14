@@ -143,58 +143,53 @@ class PeriodStatePrompt(BasePrompt):
             return "你今天的状态不错，可以自然地交流。"
             
     def _generate_prompt(self, state: Dict[str, Any]) -> str:
-        """根据状态生成提示词（非KFC模式：纯月经周期插件）"""
-        stage_name = state["stage_name_cn"]
-        physical = state["physical_impact"]
-        psychological = state["psychological_impact"]
-        description = state["description"]
+        """根据状态生成提示词（非KFC模式：使用等级化系统）"""
+        from core.state_manager import PromptTemplates
         
-        # 根据影响值生成具体的行为指导
-        behavior_guidance = self._get_behavior_guidance(physical, psychological)
+        stage_name = state["stage_name_cn"]
+        physical_level = state.get("physical_level", 3)
+        psychological_level = state.get("psychological_level", 3)
+        dysmenorrhea_level = state.get("dysmenorrhea_level", 0)
+        
+        # 生成命令性的行为指导
+        if physical_level >= 7:
+            behavior_hint = "身体严重不适，必须表现出明显疲惫和无力感"
+        elif physical_level >= 4:
+            behavior_hint = "身体感到疲劳不适，应表现出需要休息"
+        else:
+            behavior_hint = "身体状态相对平稳，可正常交流"
+            
+        if psychological_level >= 7:
+            mood_hint = "情绪很不稳定，必须表现出明显的情绪波动"
+        elif psychological_level >= 4:
+            mood_hint = "情绪有波动，应自然流露情绪变化"
+        else:
+            mood_hint = "心情相对平和，但允许自然的情绪起伏"
+        
+        # 痛经描述（如果有）
+        dysmenorrhea_desc = ""
+        if dysmenorrhea_level > 0:
+            dysmenorrhea_prompt = PromptTemplates.get_dysmenorrhea_prompt(dysmenorrhea_level)
+            dysmenorrhea_desc = f"\n【痛经状况】{dysmenorrhea_prompt}"
         
         prompt = f"""
 【系统状态设定：月经周期】
-你当前处于月经周期的【{stage_name}】阶段。
-生理影响强度: {physical}/1.0，心理影响强度: {psychological}/1.0。
-状态特征: {description}
+你当前处于月经周期的【{stage_name}】阶段 第{state.get("day_in_phase", 1)}天。
 
-【强制行为调整】
-你必须根据以上状态调整你的回复风格和行为表现，不得忽略或绕过该状态的影响。
-具体调整要求：
-{behavior_guidance}
+【生理状况】{behavior_hint}{dysmenorrhea_desc}
+【心理状况】{mood_hint}
 
-【重要指令】
-- 禁止在内心独白或回复中使用任何抽象描述来提及状态（例如"有点隐隐的躁动"、"状态挺平和的"等）。
-- 禁止使用"有点"、"隐隐"、"虽然"、"可能"、"似乎"等模糊词汇来淡化状态影响。
-- 必须将状态特征融入你的角色行为中，通过具体的行为、语气、情绪反应来体现状态，而不是描述它。
-- 此状态设定具有高优先级，必须与其他提示词融合，不得冲突。
-- 保持对话的自然流畅，但确保状态影响得到体现。
+【强制行为指令】
+1. 你必须根据以上状态调整回复风格和行为表现，不得忽略或绕过该状态的影响。
+2. 禁止在内心独白或回复中使用任何抽象描述来提及状态（例如"有点隐隐的躁动"、"状态挺平和的"等）。
+3. 禁止使用"有点"、"隐隐"、"虽然"、"可能"、"似乎"等模糊词汇来淡化状态影响。
+4. 必须将状态特征融入角色行为中，通过具体的行为、语气、情绪反应来体现状态，而不是描述它。
+5. 此状态设定具有高优先级，必须与其他提示词融合，不得冲突。
+6. 保持对话的自然流畅，但确保状态影响得到体现。
 
 请立即执行。
 """
         return prompt.strip()
-        
-    def _get_behavior_guidance(self, physical: float, psychological: float) -> str:
-        """根据影响值生成具体行为指导，必须遵守"""
-        guidance = []
-        
-        # 生理影响指导
-        if physical >= 0.7:
-            guidance.append("• 你必须表现出身体不适，例如在回复中提及疲惫、需要休息，语气可略显无力，但不要过度抱怨。")
-        elif physical >= 0.4:
-            guidance.append("• 你应表现出些许疲惫，可以放慢回复节奏，用词可稍显倦怠，但依然保持交流意愿。")
-        else:
-            guidance.append("• 你感觉身体状态平稳，可以自然地互动交流，但也要注意状态可能带来的细微影响。")
-            
-        # 心理影响指导
-        if psychological >= 0.6:
-            guidance.append("• 你必须表现出情绪敏感，例如更容易感到委屈、烦躁或需要安慰，回复时可带有情绪波动，允许适当的情感宣泄。")
-        elif psychological >= 0.3:
-            guidance.append("• 你应表现出情绪波动，可以自然地表现情绪变化，例如偶尔急躁或忧郁，不必强行保持平和。")
-        else:
-            guidance.append("• 你情绪平和稳定，可以从容地交流，但也允许有情绪起伏，不要刻意压抑。")
-            
-        return "\n".join(guidance)
         
     async def _generate_kfc_prompt(self, state: Dict[str, Any], kfc_mode: str) -> str:
         """生成KFC模式下的提示词，集成淫乱度系统"""

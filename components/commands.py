@@ -17,7 +17,7 @@ class PeriodStatusCommand(PlusCommand):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.state_manager = PeriodStateManager()
+        self.state_manager = PeriodStateManager(get_config_func=self.get_config)
         
     async def execute(self, args: CommandArgs) -> Tuple[bool, Optional[str], bool]:
         """执行状态查询"""
@@ -48,25 +48,35 @@ class PeriodStatusCommand(PlusCommand):
             return False, f"查询失败: {e}", True
             
     def _generate_status_report(self, state: Dict[str, Any], last_period_date: str) -> str:
-        """生成状态报告"""
+        """生成状态报告（使用等级系统）"""
         stage_emoji = {
             "menstrual": "🩸",
-            "follicular": "🌱", 
+            "follicular": "🌱",
             "ovulation": "🥚",
             "luteal": "🍂"
         }
         
         emoji = stage_emoji.get(state["stage"], "❓")
         
+        # 获取等级和痛经信息
+        physical_level = state.get('physical_level', 3)
+        psychological_level = state.get('psychological_level', 3)
+        dysmenorrhea_level = state.get('dysmenorrhea_level', 0)
+        
+        # 痛经信息
+        dysmenorrhea_info = ""
+        if dysmenorrhea_level > 0:
+            dysmenorrhea_info = f"\n🩹 痛经等级: {dysmenorrhea_level}/6"
+        
         report = f"""
 {emoji} 月经周期状态报告
 ━━━━━━━━━━━━━━━━━━
-📅 当前阶段: {state['stage_name_cn']}
-🔢 周期第 {state['current_day']} 天 / {state['cycle_length']} 天
+📅 当前阶段: {state['stage_name_cn']} (第{state.get('day_in_phase', 1)}天)
+🔢 周期第 {state['current_day']} 天 / 总{state['cycle_length']} 天
 📆 上次月经日期: {last_period_date}
 
-💊 生理影响: {state['physical_impact']}/1.0
-💭 心理影响: {state['psychological_impact']}/1.0
+💊 生理等级: {physical_level}/10
+💭 心理等级: {psychological_level}/10{dysmenorrhea_info}
 
 📝 状态描述:
 {state['description']}
@@ -143,7 +153,7 @@ class LustStatusCommand(PlusCommand):
             
             # 获取当前月经周期状态（用于计算淫乱度）
             from core.state_manager import PeriodStateManager
-            state_manager = PeriodStateManager()
+            state_manager = PeriodStateManager(get_config_func=self.get_config)
             cycle_length = self.get_config("cycle.cycle_length", 28)
             period_state = state_manager.calculate_current_state(cycle_length)
             lust_level = self.lust_system.calculate_lust_level(period_state)
