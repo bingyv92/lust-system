@@ -10,8 +10,8 @@ CONFIG_SCHEMA = {
         ),
         "config_version": ConfigField(
             type=str,
-            default="1.1.0",
-            description="配置文件版本"
+            default="3.0.0",
+            description="配置文件版本（3.0使用双周期锚定模型）"
         ),
         "debug_mode": ConfigField(
             type=bool,
@@ -20,66 +20,61 @@ CONFIG_SCHEMA = {
         )
     },
     "cycle": {
-        "cycle_length": ConfigField(
+        "anchor_day": ConfigField(
             type=int,
-            default=28,
-            description="月经周期长度 (天)",
-            example="28"
-        ),
-        "auto_detect": ConfigField(
-            type=bool,
-            default=True,
-            description="是否自动检测和适应周期变化"
+            default=15,
+            description="锚点日期（1-31），每月固定号数作为周期计算基准",
+            example="15"
         )
     },
-    "impacts": {
+    "levels": {
         "menstrual_physical": ConfigField(
-            type=float,
-            default=0.8,
-            description="月经期生理影响强度 (0-1)",
-            example="0.8"
+            type=int,
+            default=5,
+            description="月经期生理影响等级（1-10）",
+            example="5"
         ),
         "menstrual_psychological": ConfigField(
-            type=float,
-            default=0.7,
-            description="月经期心理影响强度 (0-1)",
-            example="0.7"
+            type=int,
+            default=4,
+            description="月经期心理影响等级（1-10）",
+            example="4"
         ),
         "follicular_physical": ConfigField(
-            type=float,
-            default=0.1,
-            description="卵泡期生理影响强度 (0-1)",
-            example="0.1"
+            type=int,
+            default=2,
+            description="卵泡期生理影响等级（1-10）",
+            example="2"
         ),
         "follicular_psychological": ConfigField(
-            type=float,
-            default=0.1,
-            description="卵泡期心理影响强度 (0-1)",
-            example="0.1"
+            type=int,
+            default=2,
+            description="卵泡期心理影响等级（1-10）",
+            example="2"
         ),
         "ovulation_physical": ConfigField(
-            type=float,
-            default=0.4,
-            description="排卵期生理影响强度 (0-1)",
-            example="0.4"
+            type=int,
+            default=3,
+            description="排卵期生理影响等级（1-10）",
+            example="3"
         ),
         "ovulation_psychological": ConfigField(
-            type=float,
-            default=0.2,
-            description="排卵期心理影响强度 (0-1)",
-            example="0.2"
+            type=int,
+            default=2,
+            description="排卵期心理影响等级（1-10）",
+            example="2"
         ),
         "luteal_physical": ConfigField(
-            type=float,
-            default=0.6,
-            description="黄体期生理影响强度 (0-1)",
-            example="0.6"
+            type=int,
+            default=4,
+            description="黄体期生理影响等级（1-10）",
+            example="4"
         ),
         "luteal_psychological": ConfigField(
-            type=float,
-            default=0.5,
-            description="黄体期心理影响强度 (0-1)",
-            example="0.5"
+            type=int,
+            default=3,
+            description="黄体期心理影响等级（1-10）",
+            example="3"
         )
     },
     "kfc_integration": {
@@ -88,17 +83,14 @@ CONFIG_SCHEMA = {
             default=True,
             description="是否启用KFC（私聊模式）集成"
         ),
-        "mode": ConfigField(
-            type=str,
-            default="unified",
-            description="KFC工作模式: unified(统一模式) 或 split(分离模式)",
-            example="unified"
-        ),
         "priority": ConfigField(
             type=int,
             default=100,
             description="KFC模式下提示词注入的优先级"
         )
+        # 注意：KFC工作模式不在插件配置中设置
+        # 插件会自动从Bot config读取 [kokoro_flow_chatter] mode 的值
+        # 这样可以确保插件始终与Bot的实际KFC模式保持一致
     },
     "lust_system": {
         "enabled": ConfigField(

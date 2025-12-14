@@ -139,20 +139,20 @@ class MofoxPeriodPlugin(BasePlugin):
     def _validate_critical_configs(self):
         """验证关键配置项的有效性"""
         try:
-            # 验证周期长度
-            cycle_length = self.get_config("cycle.cycle_length", 28)
-            if not isinstance(cycle_length, int) or cycle_length < 20 or cycle_length > 40:
-                logger.warning(f"周期长度配置无效: {cycle_length}，使用默认值28")
-                self.set_config("cycle.cycle_length", 28)
+            # 验证锚点日期（双周期锚定模型）
+            anchor_day = self.get_config("cycle.anchor_day", 15)
+            if not isinstance(anchor_day, int) or anchor_day < 1 or anchor_day > 31:
+                logger.warning(f"锚点日期配置无效: {anchor_day}，使用默认值15")
+                self.set_config("cycle.anchor_day", 15)
             
-            # 验证影响强度值
+            # 验证等级配置值（1-10整数）
             for stage in ["menstrual", "follicular", "ovulation", "luteal"]:
-                for impact_type in ["physical", "psychological"]:
-                    key = f"impacts.{stage}_{impact_type}"
-                    value = self.get_config(key, 0.5)
-                    if not isinstance(value, (int, float)) or value < 0 or value > 1:
-                        logger.warning(f"影响强度配置无效: {key}={value}，使用默认值0.5")
-                        self.set_config(key, 0.5)
+                for level_type in ["physical", "psychological"]:
+                    key = f"levels.{stage}_{level_type}"
+                    value = self.get_config(key, 5)
+                    if not isinstance(value, int) or value < 1 or value > 10:
+                        logger.warning(f"等级配置无效: {key}={value}，使用默认值5")
+                        self.set_config(key, 5)
             
             # 验证KFC模式
             kfc_mode = self.get_config("kfc_integration.mode", "unified")
