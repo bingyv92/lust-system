@@ -88,7 +88,7 @@ class PeriodStatePrompt(BasePrompt):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.state_manager = PeriodStateManager()
+        self.state_manager = PeriodStateManager(get_config_func=self.get_config)
         
     async def execute(self) -> str:
         """生成周期状态提示词 - 增强KFC支持"""
@@ -300,8 +300,8 @@ class PeriodStatePrompt(BasePrompt):
             # 统一模式：单次LLM调用，需要更详细的状态描述
             prompt = f"""
 【系统状态：月经周期 - {stage_name} 第{state.get("day_in_phase", 1)}天】
-【生理状况】{physical_desc} - {behavior_hint}
-【心理状况】{psychological_desc} - {mood_hint}{dysmenorrhea_desc}
+【生理状况】{behavior_hint}{dysmenorrhea_desc}
+【心理状况】{mood_hint}
 
 【性欲需求】{sexual_guidance}
 
@@ -319,8 +319,8 @@ class PeriodStatePrompt(BasePrompt):
             # 这是Bot当前使用的模式，提示词会注入到kfc_replyer
             prompt = f"""
 【当前状态：{stage_name} 第{state.get("day_in_phase", 1)}天】
-【生理】{physical_desc} - {behavior_hint}
-【心理】{psychological_desc} - {mood_hint}{dysmenorrhea_desc}
+【生理】{behavior_hint}{dysmenorrhea_desc}
+【心理】{mood_hint}
 【性欲】{sexual_guidance}
 【情感】{emotional_guidance}
 

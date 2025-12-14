@@ -21,6 +21,10 @@ class LustSystem:
         """
         根据月经周期状态计算淫乱度 (0.0 ~ 1.0)
         ⚠️ 月经期强制返回0.0，禁用淫乱度系统
+        
+        新算法：
+        - 周期阶段决定基础淫乱度
+        - 生理/心理等级作为调节因子（等级3为中性1.0，1-2增强，4-10抑制）
         """
         try:
             stage = period_state.get("stage", "follicular")
@@ -30,10 +34,11 @@ class LustSystem:
                 logger.info(f"[淫乱度计算] 月经期检测到，强制返回0.0（禁用淫乱度）")
                 return 0.0
             
-            current_day = period_state.get("current_day", 1)
-            cycle_length = period_state.get("cycle_length", 28)
+            # 获取生理和心理等级
+            physical_level = period_state.get("physical_level", 3)
+            psychological_level = period_state.get("psychological_level", 3)
 
-            # 基础淫乱度映射
+            # 基础淫乱度（由周期阶段决定）
             base_lust = {
                 "follicular": 0.3,
                 "ovulation": 0.9,
@@ -41,33 +46,48 @@ class LustSystem:
             }
             lust = base_lust.get(stage, 0.3)
 
-            # 根据周期天数微调
-            adjustment = self._calculate_adjustment(stage, current_day, cycle_length)
-            lust += adjustment
+            # 计算生理调节因子
+            physical_factor = self._calculate_level_factor(physical_level)
+            
+            # 计算心理调节因子
+            psychological_factor = self._calculate_level_factor(psychological_level)
+
+            # 综合计算淫乱度
+            lust = lust * physical_factor * psychological_factor
 
             # 限制在 0.0 ~ 1.0 之间
-            return max(0.0, min(1.0, round(lust, 2)))
+            final_lust = max(0.0, min(1.0, round(lust, 2)))
+            
+            logger.debug(f"[淫乱度计算] 阶段={stage}, 生理={physical_level}(×{physical_factor:.2f}), "
+                        f"心理={psychological_level}(×{psychological_factor:.2f}), "
+                        f"基础={base_lust.get(stage, 0.3):.2f} → 最终={final_lust:.2f}")
+            
+            return final_lust
 
         except Exception as e:
             logger.error(f"计算淫乱度失败: {e}")
             return 0.3
 
-    def _calculate_adjustment(self, stage: str, current_day: int, cycle_length: int) -> float:
-        """计算周期内微调值"""
-        if stage == "menstrual":
-            return (current_day - 1) / 5 * 0.05
-        elif stage == "follicular":
-            day_in_stage = current_day - 1
-            return (day_in_stage / 13) * 0.2
-        elif stage == "ovulation":
-            return 0.0
-        elif stage == "luteal":
-            day_in_stage = current_day - 14
-            total_days = cycle_length - 14
-            if total_days <= 0:
-                return 0.0
-            return (day_in_stage / total_days) * 0.1
-        return 0.0
+    def _calculate_level_factor(self, level: int) -> float:
+        """
+        根据等级计算调节因子
+        - 等级1-2：正面影响（>1.0）
+        - 等级3：中性（=1.0）
+        - 等级4-10：负面影响（<1.0）
+        
+        映射：
+        level=1 → 1.2 (增强20%)
+        level=2 → 1.1 (增强10%)
+        level=3 → 1.0 (中性)
+        level=10 → 0.5 (抑制50%)
+        """
+        if level <= 3:
+            # 等级1-3：1.2, 1.1, 1.0
+            return 1.0 + (3 - level) * 0.1
+        else:
+            # 等级4-10：线性递减到0.5
+            # 公式：1.0 - (level - 3) * (0.5 / 7)
+            return max(0.5, 1.0 - (level - 3) * 0.0714)
 
     def get_max_orgasms(self, lust_level: float) -> int:
         """根据淫乱度计算最大高潮次数"""
