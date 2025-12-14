@@ -1,0 +1,66 @@
+这里是大致参考
+[lust_system]
+
+# 是否启用淫乱度与高潮值子系统（仅KFC模式）
+enabled = true
+
+# 高潮阈值，达到此值触发高潮
+# 示例: 100.0
+orgasm_threshold = 100
+
+# 前戏阈值
+# 示例: 20.0
+foreplay_threshold = 20
+
+# 正戏阈值
+# 示例: 60.0
+main_threshold = 40
+
+# 基础得分权重，用于调整LLM评分对高潮值的影响
+# 示例: 1.0
+base_score_weight = 2
+
+# 高潮值衰减率（每秒减少的分数）
+# 示例: 0.1
+decay_rate = 0.1
+
+# 高潮后高潮值恢复比例，相对于 main_threshold（例如0.4表示恢复至正戏阈值的40%）
+# 示例: 0.4
+post_orgasm_recovery_ratio = 0.8
+
+# 初始高潮值系数，用于计算初始高潮值（lust_level * foreplay_threshold * initial_ratio）
+# 示例: 1
+initial_ratio = 0.5
+
+# 被动主动阈值系数，用于划分被动未开始和主动未开始（passive_active_threshold = foreplay_threshold * passive_active_ratio）
+# 示例: 0.3
+passive_active_ratio = 0.5
+
+# 低评分阈值，低于此值视为低评分
+# 示例: 3.0
+low_score_threshold = 2
+
+# 连续低评分次数触发终止
+# 示例: 3
+low_score_count_to_terminate = 5
+
+# 递减机制中的衰减率乘数，用于加速高潮值下降
+# 示例: 2.0
+termination_decay_multiplier = 5
+
+# 冷却持续时间（秒），仅用于体力不支终止（高潮次数用尽）
+# 示例: 300
+cooldown_duration = 3600
+
+# 用于评分的LLM模型名称（可选），使用系统默认judge模型
+# 示例: judge_model
+llm_model = "judge_model"
+
+
+[backup]
+
+# 是否自动备份配置和数据
+auto_backup = true
+
+# 备份保留天数
+backup_days = 30

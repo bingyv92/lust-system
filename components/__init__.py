@@ -1,0 +1,1 @@
+# components package for mofox_period_plugin
