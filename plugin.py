@@ -16,7 +16,10 @@ from src.common.logger import get_logger
 # 导入新模块中的类
 from core.state_manager import PeriodStateManager
 from components.prompts import PeriodStatePrompt
-from components.commands import PeriodStatusCommand, SetPeriodCommand, LustStatusCommand, LustEndCommand
+from components.commands import (
+    PeriodStatusCommand, SetPeriodCommand, SetAnchorDayCommand,
+    RegenerateCycleCommand, LustStatusCommand, LustEndCommand
+)
 from components.handlers import PeriodStateUpdateHandler
 from components.lust_scoring_handler import LustScoringHandler
 from config_schema import CONFIG_SCHEMA
@@ -74,6 +77,8 @@ class MofoxPeriodPlugin(BasePlugin):
             components.append((PeriodStatePrompt.get_prompt_info(), PeriodStatePrompt))
             components.append((PeriodStatusCommand.get_plus_command_info(), PeriodStatusCommand))
             components.append((SetPeriodCommand.get_plus_command_info(), SetPeriodCommand))
+            components.append((SetAnchorDayCommand.get_plus_command_info(), SetAnchorDayCommand))
+            components.append((RegenerateCycleCommand.get_plus_command_info(), RegenerateCycleCommand))
             # 如果淫乱度系统启用，注册相关组件
             if self.get_config("lust_system.enabled", True):
                 components.append((LustScoringHandler.get_handler_info(), LustScoringHandler))

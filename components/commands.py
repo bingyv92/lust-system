@@ -1,7 +1,7 @@
 import re
 from typing import Tuple, Dict, Any, Optional, ClassVar
 from src.plugin_system import PlusCommand, CommandArgs, ChatType
-from core.state_manager import PeriodStateManager, get_last_period_date, set_last_period_date
+from core.state_manager import PeriodStateManager, get_last_period_date, set_last_period_date, set_anchor_day
 from src.common.logger import get_logger
 from core.lust_system import LustSystem
 
@@ -121,6 +121,85 @@ class SetPeriodCommand(PlusCommand):
             logger.error(f"设置月经日期失败: {e}")
             await self.send_text("❌ 设置失败，请检查输入")
             return False, f"设置失败: {e}", True
+
+
+class SetAnchorDayCommand(PlusCommand):
+    """设置锚点日期命令（双周期锚定模型）"""
+    
+    command_name = "set_anchor"
+    command_description = "设置月经周期锚点日期 (格式: /set_anchor 1-31)"
+    command_aliases: ClassVar[list[str]] = ["设置锚点", "锚点日期"]
+    chat_type_allow = ChatType.PRIVATE  # 只在私聊中使用
+    
+    async def execute(self, args: CommandArgs) -> Tuple[bool, Optional[str], bool]:
+        """执行设置锚点日期"""
+        try:
+            # 从参数中获取日期
+            if args.is_empty:
+                await self.send_text("❌ 格式错误，请使用: /set_anchor 1-31 (例如: /set_anchor 15)")
+                return True, "格式错误", True
+            
+            day_str = args.get_first
+            
+            # 验证是否为整数
+            try:
+                day = int(day_str)
+            except ValueError:
+                await self.send_text("❌ 日期必须是1-31之间的整数")
+                return True, "日期格式无效", True
+            
+            if set_anchor_day(day, force_regenerate=True):
+                await self.send_text(f"""✅ 锚点日期已更新为每月 {day} 号
+                
+🔄 双周期数据已重新生成
+💡 请使用 /月经状态 查看新的周期信息""")
+                return True, f"设置锚点日期: {day}", True
+            else:
+                await self.send_text("❌ 日期无效，请使用1-31之间的整数")
+                return True, "日期无效", True
+                
+        except Exception as e:
+            logger.error(f"设置锚点日期失败: {e}")
+            await self.send_text("❌ 设置失败，请检查输入")
+            return False, f"设置失败: {e}", True
+
+
+class RegenerateCycleCommand(PlusCommand):
+    """强制重新生成双周期命令"""
+    
+    command_name = "regenerate_cycle"
+    command_description = "强制重新生成双周期数据"
+    command_aliases: ClassVar[list[str]] = ["重新生成周期", "刷新周期"]
+    chat_type_allow = ChatType.PRIVATE  # 只在私聊中使用
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.state_manager = PeriodStateManager(get_config_func=self.get_config)
+        
+    async def execute(self, args: CommandArgs) -> Tuple[bool, Optional[str], bool]:
+        """执行强制重新生成"""
+        try:
+            # 强制重新生成双周期
+            self.state_manager.force_regenerate_cycle()
+            
+            # 获取新的周期状态
+            state = self.state_manager.calculate_current_state(force_recalc=True)
+            
+            await self.send_text(f"""✅ 双周期数据已重新生成
+            
+📅 新周期信息:
+• 当前阶段: {state['stage_name_cn']} (第{state.get('day_in_phase', 1)}天)
+• 周期第 {state['current_day']} 天 / 总{state['cycle_length']} 天
+• 周期编号: 第{state.get('cycle_num', 1)}周期
+
+💡 请使用 /月经状态 查看完整信息""")
+            
+            return True, "强制重新生成双周期", True
+            
+        except Exception as e:
+            logger.error(f"重新生成双周期失败: {e}")
+            await self.send_text("❌ 重新生成失败，请稍后重试")
+            return False, f"重新生成失败: {e}", True
 class LustStatusCommand(PlusCommand):
     """查询淫乱度状态命令"""
     

@@ -106,19 +106,26 @@ class DualCycleData:
         
     def _calculate_end_date(self) -> datetime:
         """计算结束锚点日期（下下个月的锚点日）"""
-        # 从起始日期开始，找到第二个锚点
+        # 从起始日期开始，跳到下下个月
         current = self.start_date
-        # 跳到下一个月
+        
+        # 第一次跳：跳到下一个月
         if current.month == 12:
             next_month = current.replace(year=current.year + 1, month=1, day=1)
         else:
             next_month = current.replace(month=current.month + 1, day=1)
         
-        # 获取下一个月的锚点日
-        days_in_month = monthrange(next_month.year, next_month.month)[1]
+        # 第二次跳：跳到下下个月
+        if next_month.month == 12:
+            next_next_month = next_month.replace(year=next_month.year + 1, month=1, day=1)
+        else:
+            next_next_month = next_month.replace(month=next_month.month + 1, day=1)
+        
+        # 获取下下个月的锚点日
+        days_in_month = monthrange(next_next_month.year, next_next_month.month)[1]
         anchor = min(self.anchor_day, days_in_month)
         
-        return next_month.replace(day=anchor)
+        return next_next_month.replace(day=anchor)
     
     def to_dict(self) -> dict:
         """转换为字典以便存储"""
@@ -153,24 +160,50 @@ class DualCycleData:
 class DualCycleManager:
     """双周期锚定管理器"""
     
-    def __init__(self):
+    def __init__(self, get_config_func=None):
+        """
+        初始化双周期管理器
+        
+        Args:
+            get_config_func: 配置获取函数，用于从config读取anchor_day
+        """
         self.current_cycle: Optional[DualCycleData] = None
+        self.get_config = get_config_func
+        self._sync_anchor_day_from_config()  # 同步配置到storage
         self._load_or_generate_cycle()
+    
+    def _sync_anchor_day_from_config(self):
+        """从配置文件同步锚点日期到storage"""
+        if self.get_config:
+            config_anchor = self.get_config("cycle.anchor_day", None)
+            if config_anchor is not None:
+                storage_anchor = plugin_storage.get("anchor_day", None)
+                if storage_anchor != config_anchor:
+                    logger.info(f"同步锚点日期: config={config_anchor}, storage={storage_anchor} → {config_anchor}")
+                    plugin_storage.set("anchor_day", config_anchor)
+                    # 清除旧的双周期数据，强制重新生成
+                    plugin_storage.delete("dual_cycle_data")
     
     def _load_or_generate_cycle(self):
         """加载或生成双周期数据"""
         stored_cycle = plugin_storage.get("dual_cycle_data", None)
+        current_anchor = plugin_storage.get("anchor_day", 15)
         
         if stored_cycle:
             try:
                 self.current_cycle = DualCycleData.from_dict(stored_cycle)
-                # 检查是否已过期
                 today = datetime.now()
-                if today >= self.current_cycle.end_date:
+                
+                # 检查anchor_day是否改变
+                if self.current_cycle.anchor_day != current_anchor:
+                    logger.info(f"检测到锚点日期变化: {self.current_cycle.anchor_day} → {current_anchor}，重新生成周期")
+                    self._generate_new_cycle()
+                # 检查是否已过期
+                elif today >= self.current_cycle.end_date:
                     logger.info("双周期已过期，重新生成")
                     self._generate_new_cycle()
                 else:
-                    logger.info(f"加载已存储的双周期数据，有效期至 {self.current_cycle.end_date.date()}")
+                    logger.info(f"加载已存储的双周期数据（锚点={self.current_cycle.anchor_day}号），有效期至 {self.current_cycle.end_date.date()}")
             except Exception as e:
                 logger.error(f"加载双周期数据失败: {e}，重新生成")
                 self._generate_new_cycle()
@@ -179,59 +212,60 @@ class DualCycleManager:
             self._generate_new_cycle()
     
     def _generate_new_cycle(self):
-        """生成新的双周期数据"""
+        """
+        生成新的双周期数据
+        ⚠️ 锚点日期 = 月经期第1天
+        ⚠️ 两个周期总长 = 起始锚点到下下个月锚点的天数
+        """
         # 从存储获取锚点日期配置，默认为15号
         anchor_day = plugin_storage.get("anchor_day", 15)
         
-        # 计算当前锚点日期
+        # 计算当前锚点日期（月经开始日期）
         today = datetime.now()
         days_in_month = monthrange(today.year, today.month)[1]
         anchor = min(anchor_day, days_in_month)
         
-        # 如果今天已经过了本月锚点，从本月锚点开始，否则从上月锚点开始
+        # 确定最近的月经开始日期（锚点日期）
+        # 如果今天是锚点日期或之后，则本月锚点是月经开始
+        # 否则使用上月锚点作为月经开始
         if today.day >= anchor:
-            start_date = today.replace(day=anchor)
+            # 本月锚点日期
+            menstrual_start_date = today.replace(day=anchor)
         else:
-            # 回到上个月
+            # 回到上个月的锚点日期
             if today.month == 1:
                 last_month = today.replace(year=today.year - 1, month=12, day=1)
             else:
                 last_month = today.replace(month=today.month - 1, day=1)
             days_in_last_month = monthrange(last_month.year, last_month.month)[1]
             anchor_last = min(anchor_day, days_in_last_month)
-            start_date = last_month.replace(day=anchor_last)
+            menstrual_start_date = last_month.replace(day=anchor_last)
         
-        # 计算到下一个锚点的总天数
-        next_anchor_date = self._get_next_anchor_date(start_date, anchor_day)
-        total_days = (next_anchor_date - start_date).days
+        # 起始日期 = 月经开始日期
+        start_date = menstrual_start_date
         
-        # 确保总天数足够（至少50天才能容纳两个25天周期）
-        if total_days < 50:
-            logger.warning(f"两个锚点间隔太短({total_days}天)，调整周期长度")
-            # 如果总天数不够，平均分配
+        # 计算下下个月的锚点日期（结束日期）
+        end_date = self._calculate_next_next_anchor(start_date, anchor_day)
+        
+        # 总天数 = 从起始锚点到下下个月锚点
+        total_days = (end_date - start_date).days
+        
+        # 将总天数分配给两个周期（随机分配，保持合理比例）
+        # 例如：62天可以分配为 30+32, 28+34, 31+31 等
+        half = total_days // 2
+        # 在half附近随机偏移3-5天
+        offset = random.randint(3, 5)
+        if random.random() > 0.5:
+            cycle1_length = half + offset
+        else:
+            cycle1_length = half - offset
+        cycle2_length = total_days - cycle1_length
+        
+        # 确保周期长度合理（至少21天）
+        if cycle1_length < 21 or cycle2_length < 21:
+            logger.warning(f"周期长度过短（总计{total_days}天），平均分配")
             cycle1_length = total_days // 2
             cycle2_length = total_days - cycle1_length
-        else:
-            # 正常情况：生成第一周期（25-35天）
-            # 确保min <= max
-            min_cycle1 = 25
-            max_cycle1 = min(35, total_days - 25)  # 保证第二周期至少25天
-            
-            if max_cycle1 < min_cycle1:
-                # 如果还是不够，平均分配
-                cycle1_length = total_days // 2
-                cycle2_length = total_days - cycle1_length
-            else:
-                cycle1_length = random.randint(min_cycle1, max_cycle1)
-                cycle2_length = total_days - cycle1_length
-                
-                # 验证第二周期是否在合理范围内
-                if cycle2_length < 25:
-                    cycle1_length = total_days - 25
-                    cycle2_length = 25
-                elif cycle2_length > 35:
-                    cycle1_length = total_days - 35
-                    cycle2_length = 35
         
         # 随机生成月经天数（3-7天）
         cycle1_menstrual_days = random.randint(3, 7)
@@ -249,10 +283,34 @@ class DualCycleManager:
         # 保存到存储
         plugin_storage.set("dual_cycle_data", self.current_cycle.to_dict())
         
-        logger.info(f"生成新双周期: 起始={start_date.date()}, "
+        logger.info(f"生成新双周期（锚点={anchor_day}号=月经开始）: "
+                   f"起始={start_date.date()}, "
+                   f"结束={end_date.date()}, "
                    f"周期1={cycle1_length}天(月经{cycle1_menstrual_days}天), "
                    f"周期2={cycle2_length}天(月经{cycle2_menstrual_days}天), "
                    f"总计={total_days}天")
+    
+    def _calculate_next_next_anchor(self, from_date: datetime, anchor_day: int) -> datetime:
+        """计算下下个月的锚点日期"""
+        current = from_date
+        
+        # 第一次跳：跳到下一个月
+        if current.month == 12:
+            next_month = current.replace(year=current.year + 1, month=1, day=1)
+        else:
+            next_month = current.replace(month=current.month + 1, day=1)
+        
+        # 第二次跳：跳到下下个月
+        if next_month.month == 12:
+            next_next_month = next_month.replace(year=next_month.year + 1, month=1, day=1)
+        else:
+            next_next_month = next_month.replace(month=next_month.month + 1, day=1)
+        
+        # 获取下下个月的锚点日
+        days_in_month = monthrange(next_next_month.year, next_next_month.month)[1]
+        anchor = min(anchor_day, days_in_month)
+        
+        return next_next_month.replace(day=anchor)
     
     def _get_next_anchor_date(self, from_date: datetime, anchor_day: int) -> datetime:
         """获取下一个锚点日期"""
@@ -363,20 +421,23 @@ class PeriodStateManager:
         Args:
             get_config_func: 配置获取函数，格式为 func(key, default)
         """
-        self.cycle_manager = DualCycleManager()
+        self.get_config = get_config_func
+        self.cycle_manager = DualCycleManager(get_config_func=get_config_func)  # 传递配置函数
         self.last_calculated_date = None
         self.current_state = None
-        self.get_config = get_config_func
         
-    def calculate_current_state(self, cycle_length: int = None) -> Dict[str, Any]:
+    def calculate_current_state(self, cycle_length: int = None, force_recalc: bool = False) -> Dict[str, Any]:
         """
         计算当前周期状态
-        注意：cycle_length参数已废弃，仅为兼容性保留
+        
+        Args:
+            cycle_length: 已废弃，仅为兼容性保留
+            force_recalc: 是否强制重新计算（忽略缓存）
         """
         today = datetime.now()
         
-        # 如果已经计算过今天的状态，直接返回缓存
-        if self.last_calculated_date == today.date() and self.current_state:
+        # 如果已经计算过今天的状态，直接返回缓存（除非强制重新计算）
+        if not force_recalc and self.last_calculated_date == today.date() and self.current_state:
             return self.current_state
         
         try:
@@ -541,6 +602,18 @@ class PeriodStateManager:
             "luteal": "身体疲惫，情绪波动，需要更多耐心"
         }
         return descriptions.get(stage, "")
+    
+    def clear_cache(self):
+        """清除状态缓存，强制下次查询重新计算"""
+        self.last_calculated_date = None
+        self.current_state = None
+        logger.info("已清除周期状态缓存")
+    
+    def force_regenerate_cycle(self):
+        """强制重新生成双周期数据"""
+        self.cycle_manager.regenerate_cycle()
+        self.clear_cache()
+        logger.info("已强制重新生成双周期数据")
 
 
 # ============================================================================
@@ -567,15 +640,29 @@ def set_last_period_date(date_str: str) -> bool:
     logger.warning("set_last_period_date() 已废弃，请使用 set_anchor_day() 设置锚点日期")
     return False
 
-def set_anchor_day(day: int) -> bool:
-    """设置锚点日期（1-31）"""
+def set_anchor_day(day: int, force_regenerate: bool = True) -> bool:
+    """
+    设置锚点日期（1-31）
+    
+    Args:
+        day: 锚点日期（1-31）
+        force_regenerate: 是否立即重新生成双周期数据（默认True）
+    """
     try:
         if not isinstance(day, int) or day < 1 or day > 31:
             logger.error(f"无效的锚点日期: {day}，必须是1-31之间的整数")
             return False
         
+        old_anchor = plugin_storage.get("anchor_day", 15)
         plugin_storage.set("anchor_day", day)
-        logger.info(f"更新锚点日期为每月 {day} 号，将在下次周期过期时生效")
+        
+        if force_regenerate and old_anchor != day:
+            # 清除旧的双周期数据，强制重新生成
+            plugin_storage.delete("dual_cycle_data")
+            logger.info(f"更新锚点日期: {old_anchor} → {day}，已清除旧周期数据，将立即重新生成")
+        else:
+            logger.info(f"更新锚点日期为每月 {day} 号")
+        
         return True
     except Exception as e:
         logger.error(f"设置锚点日期失败: {e}")
