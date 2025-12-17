@@ -77,6 +77,48 @@ CONFIG_SCHEMA = {
             example="3"
         )
     },
+    "dysmenorrhea": {
+        "prob_none": ConfigField(
+            type=float,
+            default=0.25,
+            description="无痛经概率（0.0-1.0）"
+        ),
+        "prob_mild": ConfigField(
+            type=float,
+            default=0.30,
+            description="轻度痛经概率（1-2级，0.0-1.0）"
+        ),
+        "prob_moderate": ConfigField(
+            type=float,
+            default=0.25,
+            description="中度痛经概率（3-4级，0.0-1.0）"
+        ),
+        "prob_severe": ConfigField(
+            type=float,
+            default=0.20,
+            description="重度痛经概率（5-6级，0.0-1.0）"
+        ),
+        "enable_llm_relief": ConfigField(
+            type=bool,
+            default=False,
+            description="是否启用LLM判定消息缓解痛经功能"
+        ),
+        "llm_model": ConfigField(
+            type=str,
+            default="default",
+            description="缓解判定使用的LLM模型（\"default\" 使用第一个可用模型，或指定模型名称）"
+        ),
+        "relief_duration_minutes": ConfigField(
+            type=int,
+            default=60,
+            description="缓解效果持续时间（分钟）"
+        ),
+        "relief_reduction": ConfigField(
+            type=int,
+            default=1,
+            description="缓解时降低的痛经等级（0-6）"
+        )
+    },
     "kfc_integration": {
         "enabled": ConfigField(
             type=bool,
@@ -164,11 +206,17 @@ CONFIG_SCHEMA = {
             description="递减机制中的衰减率乘数，用于加速高潮值下降",
             example="2.0"
         ),
-        "cooldown_duration": ConfigField(
+        "afterglow_duration": ConfigField(
             type=int,
-            default=300,
-            description="冷却持续时间（秒），仅用于体力不支终止（高潮次数用尽）",
-            example="300"
+            default=60,
+            description="高潮余韵期持续时间（秒），刚高潮后的愉悦放松期",
+            example="60"
+        ),
+        "recovery_duration": ConfigField(
+            type=int,
+            default=240,
+            description="体力恢复期持续时间（秒），余韵期结束后的体力恢复阶段",
+            example="240"
         ),
         "llm_model": ConfigField(
             type=str,

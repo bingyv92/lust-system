@@ -22,6 +22,7 @@ from components.commands import (
 )
 from components.handlers import PeriodStateUpdateHandler
 from components.lust_scoring_handler import LustScoringHandler
+from components.message_relief_handler import MessageReliefHandler
 from config_schema import CONFIG_SCHEMA
 
 logger = get_logger("mofox_period_plugin")
@@ -74,6 +75,10 @@ class MofoxPeriodPlugin(BasePlugin):
         
         # 根据配置决定是否注册其他组件
         if self.get_config("plugin.enabled", False):
+            # 如果启用LLM缓解功能，注册消息缓解处理器
+            if self.get_config("dysmenorrhea.enable_llm_relief", False):
+                components.append((MessageReliefHandler.get_handler_info(), MessageReliefHandler))
+            
             components.append((PeriodStatePrompt.get_prompt_info(), PeriodStatePrompt))
             components.append((PeriodStatusCommand.get_plus_command_info(), PeriodStatusCommand))
             components.append((SetPeriodCommand.get_plus_command_info(), SetPeriodCommand))
