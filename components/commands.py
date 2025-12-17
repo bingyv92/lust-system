@@ -1,7 +1,7 @@
 import re
 from typing import Tuple, Dict, Any, Optional, ClassVar
 from src.plugin_system import PlusCommand, CommandArgs, ChatType
-from core.state_manager import PeriodStateManager, get_last_period_date, set_last_period_date, set_anchor_day
+from core.state_manager import get_state_manager, get_last_period_date, set_last_period_date, set_anchor_day
 from src.common.logger import get_logger
 from core.lust_system import LustSystem
 
@@ -17,7 +17,7 @@ class PeriodStatusCommand(PlusCommand):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.state_manager = PeriodStateManager(get_config_func=self.get_config)
+        self.state_manager = get_state_manager(get_config_func=self.get_config)
         
     async def execute(self, args: CommandArgs) -> Tuple[bool, Optional[str], bool]:
         """执行状态查询"""
@@ -174,7 +174,7 @@ class RegenerateCycleCommand(PlusCommand):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.state_manager = PeriodStateManager(get_config_func=self.get_config)
+        self.state_manager = get_state_manager(get_config_func=self.get_config)
         
     async def execute(self, args: CommandArgs) -> Tuple[bool, Optional[str], bool]:
         """执行强制重新生成"""
@@ -231,8 +231,7 @@ class LustStatusCommand(PlusCommand):
             data = self.lust_system.get_user_data(str(user_id))
             
             # 获取当前月经周期状态（用于计算淫乱度）
-            from core.state_manager import PeriodStateManager
-            state_manager = PeriodStateManager(get_config_func=self.get_config)
+            state_manager = get_state_manager(get_config_func=self.get_config)
             cycle_length = self.get_config("cycle.cycle_length", 28)
             period_state = state_manager.calculate_current_state(cycle_length)
             lust_level = self.lust_system.calculate_lust_level(period_state)

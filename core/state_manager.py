@@ -826,3 +826,29 @@ def set_anchor_day(day: int, force_regenerate: bool = True) -> bool:
     except Exception as e:
         logger.error(f"设置锚点日期失败: {e}")
         return False
+
+
+# ============================================================================
+# 单例模式实现 - 确保所有组件共享同一个管理器实例
+# ============================================================================
+
+_state_manager_instance: Optional[PeriodStateManager] = None
+_state_manager_lock = None
+
+def get_state_manager(get_config_func=None) -> PeriodStateManager:
+    """
+    获取 PeriodStateManager 单例实例
+    
+    Args:
+        get_config_func: 配置获取函数（仅在首次调用时使用）
+    
+    Returns:
+        PeriodStateManager 单例实例
+    """
+    global _state_manager_instance
+    
+    if _state_manager_instance is None:
+        _state_manager_instance = PeriodStateManager(get_config_func=get_config_func)
+        logger.debug("创建 PeriodStateManager 单例实例")
+    
+    return _state_manager_instance

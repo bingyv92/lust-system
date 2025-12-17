@@ -4,7 +4,7 @@ from pathlib import Path
 from src.plugin_system.base.base_prompt import BasePrompt
 from src.plugin_system.base.component_types import InjectionRule, InjectionType
 from src.plugin_system.apis import config_api, person_api
-from core.state_manager import PeriodStateManager
+from core.state_manager import get_state_manager
 from core.lust_system import LustSystem
 from src.common.logger import get_logger
 
@@ -88,7 +88,7 @@ class PeriodStatePrompt(BasePrompt):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.state_manager = PeriodStateManager(get_config_func=self.get_config)
+        self.state_manager = get_state_manager(get_config_func=self.get_config)
         
     async def execute(self) -> str:
         """生成周期状态提示词 - 增强KFC支持"""

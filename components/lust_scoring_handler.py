@@ -59,10 +59,10 @@ class LustScoringHandler(BaseEventHandler):
                 return HandlerResult(success=True, continue_process=True)
 
             # 7. 获取月经周期状态并计算淫乱度
-            from core.state_manager import PeriodStateManager
+            from core.state_manager import get_state_manager
             from src.plugin_system.apis import person_api
             
-            state_manager = PeriodStateManager()
+            state_manager = get_state_manager(get_config_func=self.get_config)
             cycle_length = self.get_config("cycle.cycle_length", 28)
             period_state = state_manager.calculate_current_state(cycle_length)
             lust_level = self.lust_system.calculate_lust_level(period_state)

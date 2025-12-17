@@ -8,7 +8,6 @@ from src.plugin_system.apis import llm_api
 from src.common.logger import get_logger
 
 # 导入管理器（延迟导入避免循环依赖）
-from core.state_manager import PeriodStateManager
 from core.llm_relief_manager import LLMReliefManager
 
 logger = get_logger("mofox_period_plugin.message_relief_handler")
@@ -51,7 +50,8 @@ class MessageReliefHandler(BaseEventHandler):
             
             # 延迟初始化管理器
             if not self.state_manager:
-                self.state_manager = PeriodStateManager(get_config_func=self.get_config)
+                from core.state_manager import get_state_manager
+                self.state_manager = get_state_manager(get_config_func=self.get_config)
             
             if not self.relief_manager:
                 config = self._collect_config()
