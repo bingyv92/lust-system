@@ -265,6 +265,7 @@ class LustSystem:
             "current_stage": self._determine_stage(initial_orgasm_value),
             "consecutive_low_scores": 0,
             "termination_decay_multiplier": 1.0,
+            "termination_triggered": False,  # 性交终止判定标记
             "lust_level": lust_level,
             "last_period_state": None,
         }
@@ -389,6 +390,7 @@ class LustSystem:
                 data["consecutive_low_scores"] = 0
                 data["termination_decay_multiplier"] = 1.0
                 data["just_orgasmed"] = False
+                data["termination_triggered"] = False  # 清除终止判定标记
                 
                 # 保存更新后的数据
                 self.save_user_data(user_id, data)
@@ -418,20 +420,40 @@ class LustSystem:
             if score < low_score_threshold:
                 data["consecutive_low_scores"] = data.get("consecutive_low_scores", 0) + 1
                 low_score_count = self._get_config("lust_system.low_score_count_to_terminate", 3)
+                
+                # 【新增逻辑】连续低评分达到阈值时，判定性交终止，进入余韵期和恢复期
                 if data["consecutive_low_scores"] >= low_score_count:
-                    data["termination_decay_multiplier"] = self._get_config("lust_system.termination_decay_multiplier", 2.0)
-                    logger.info(f"[递减] 用户 {user_id} 在正戏阶段触发加速衰减")
+                    # 检查是否已经触发过终止判定（避免重复触发）
+                    if not data.get("termination_triggered"):
+                        logger.info(f"[性交终止] 用户 {user_id} 连续{data['consecutive_low_scores']}次低评分，判定性交提前终止")
+                        
+                        # 标记已触发终止判定
+                        data["termination_triggered"] = True
+                        
+                        # 直接进入高潮余韵期和体力恢复期
+                        self._start_afterglow(user_id, data)
+                        
+                        # 保存数据并返回（不再更新高潮值）
+                        self.save_user_data(user_id, data)
+                        return data
+                    else:
+                        # 已经触发过终止判定，继续加速衰减
+                        data["termination_decay_multiplier"] = self._get_config("lust_system.termination_decay_multiplier", 2.0)
+                        logger.debug(f"[递减] 用户 {user_id} 继续加速衰减")
             else:
+                # 评分恢复正常，重置连续低评分计数和终止标记
                 if data.get("termination_decay_multiplier", 1.0) > 1.0:
-                    logger.info(f"[恢复] 用户 {user_id} 重置衰减倍率")
+                    logger.info(f"[恢复] 用户 {user_id} 重置衰减倍率和终止标记")
                 data["consecutive_low_scores"] = 0
                 data["termination_decay_multiplier"] = 1.0
+                data["termination_triggered"] = False  # 重置终止标记
         else:
             # 非正戏阶段，重置加速衰减相关状态
             if data.get("consecutive_low_scores", 0) > 0 or data.get("termination_decay_multiplier", 1.0) > 1.0:
-                logger.info(f"[重置] 用户 {user_id} 离开正戏阶段，重置加速衰减状态")
+                logger.info(f"[重置] 用户 {user_id} 离开正戏阶段，重置加速衰减状态和终止标记")
                 data["consecutive_low_scores"] = 0
                 data["termination_decay_multiplier"] = 1.0
+                data["termination_triggered"] = False  # 重置终止标记
 
         # 更新高潮值
         return self.update_orgasm_value(user_id, score)
