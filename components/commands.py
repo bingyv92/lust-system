@@ -227,14 +227,14 @@ class LustStatusCommand(PlusCommand):
                 await self.send_text("❌ 无法识别用户")
                 return True, "用户ID缺失", True
             
-            # 获取用户数据
-            data = self.lust_system.get_user_data(str(user_id))
-            
             # 获取当前月经周期状态（用于计算淫乱度）
             state_manager = get_state_manager(get_config_func=self.get_config)
             cycle_length = self.get_config("cycle.cycle_length", 28)
             period_state = state_manager.calculate_current_state(cycle_length)
             lust_level = self.lust_system.calculate_lust_level(period_state)
+            
+            # 获取用户数据（传递period_state用于初始化）
+            data = self.lust_system.get_user_data(str(user_id), period_state)
             
             # 生成报告
             report = self._generate_status_report(data, lust_level, period_state)

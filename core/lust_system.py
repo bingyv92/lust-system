@@ -235,12 +235,12 @@ class LustSystem:
 
     # ==================== 高潮值管理 ====================
 
-    def get_user_data(self, user_id: str) -> Dict[str, Any]:
+    def get_user_data(self, user_id: str, period_state: Dict[str, Any] = None) -> Dict[str, Any]:
         """获取用户数据，如果不存在则初始化"""
         key = f"lust_system:user_data:{user_id}"
         data = plugin_storage.get(key, None)
         if data is None:
-            data = self._create_default_user_data(user_id)
+            data = self._create_default_user_data(user_id, period_state)
             plugin_storage.set(key, data)
         
         # 检查冷却期是否已过期
@@ -248,9 +248,16 @@ class LustSystem:
         
         return data
 
-    def _create_default_user_data(self, user_id: str) -> Dict[str, Any]:
+    def _create_default_user_data(self, user_id: str, period_state: Dict[str, Any] = None) -> Dict[str, Any]:
         """创建默认用户数据"""
-        lust_level = 0.3
+        # 根据当前月经周期状态计算淫乱度，如果没有提供则使用默认值0.3
+        if period_state:
+            lust_level = self.calculate_lust_level(period_state)
+            logger.info(f"[初始化] 用户 {user_id} 根据月经周期计算初始淫乱度={lust_level:.2f}")
+        else:
+            lust_level = 0.3
+            logger.warning(f"[初始化] 用户 {user_id} 未提供月经状态，使用默认淫乱度=0.3")
+        
         max_orgasms = self.get_max_orgasms(lust_level)
         foreplay_threshold = self._get_config("lust_system.foreplay_threshold", 20.0)
         initial_ratio = self._get_config("lust_system.initial_ratio", 0.5)
@@ -267,7 +274,7 @@ class LustSystem:
             "termination_decay_multiplier": 1.0,
             "termination_triggered": False,  # 性交终止判定标记
             "lust_level": lust_level,
-            "last_period_state": None,
+            "last_period_state": period_state,  # 保存当前周期状态
         }
 
     def save_user_data(self, user_id: str, data: Dict[str, Any]):
@@ -401,9 +408,15 @@ class LustSystem:
                 data["afterglow_until"] = None  # 清除余韵期标记
                 self.save_user_data(user_id, data)
 
-    def process_score(self, user_id: str, score: float) -> Dict[str, Any]:
-        """处理评分，更新连续低评分计数，更新高潮值"""
-        data = self.get_user_data(user_id)
+    def process_score(self, user_id: str, score: float, period_state: Dict[str, Any] = None) -> Dict[str, Any]:
+        """处理评分，更新连续低评分计数，更新高潮值
+        
+        Args:
+            user_id: 用户ID
+            score: LLM评分
+            period_state: 当前月经周期状态（可选，用于初始化）
+        """
+        data = self.get_user_data(user_id, period_state)
         
         # 清除上次的高潮标记（如果存在且已过期）
         if data.get("just_orgasmed"):
@@ -648,13 +661,13 @@ class LustSystem:
         # 计算当前淫乱度
         lust_level = self.calculate_lust_level(period_state)
         
-        # 只读取数据，不修改
-        data = self.get_user_data(user_id)
+        # 只读取数据，不修改（传递period_state用于初始化）
+        data = self.get_user_data(user_id, period_state)
         
         # 如果需要冷却后初始化，先执行（这会修改数据）
         if data.get("need_reinit_after_cooldown"):
             self._perform_cooldown_reinit(user_id, data, period_state, lust_level)
-            # 重新读取更新后的数据
+            # 重新读取更新后的数据（不需要再次传递period_state，因为已经初始化）
             data = self.get_user_data(user_id)
         
         # 检查淫乱度是否需要更新（但不立即更新，避免覆盖评分后的状态）
@@ -788,7 +801,7 @@ class LustSystem:
         在LLM评分时调用，确保淫乱度和最大高潮次数保持同步
         """
         lust_level = self.calculate_lust_level(period_state)
-        data = self.get_user_data(user_id)
+        data = self.get_user_data(user_id, period_state)  # 传递period_state用于初始化
         
         old_lust = data.get("lust_level", 0)
         data["last_period_state"] = period_state

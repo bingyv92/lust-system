@@ -76,8 +76,8 @@ class LustScoringHandler(BaseEventHandler):
             # 10. 更新淫乱度数据（确保淫乱度和最大高潮次数同步）
             self.lust_system.update_lust_from_period_state(person_id, period_state)
             
-            # 11. 处理评分，更新高潮值
-            user_data = self.lust_system.process_score(person_id, score)
+            # 11. 处理评分，更新高潮值（传递period_state用于初始化）
+            user_data = self.lust_system.process_score(person_id, score, period_state)
             
             # 12. 记录当前活跃用户（供Prompt使用）
             from src.plugin_system.apis import storage_api
