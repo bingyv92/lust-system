@@ -452,12 +452,11 @@ class PeriodStateManager:
         self.last_calculated_date = None
         self.current_state = None
         
-    def calculate_current_state(self, cycle_length: int | None = None, force_recalc: bool = False) -> Dict[str, Any]:
+    def calculate_current_state(self, force_recalc: bool = False) -> Dict[str, Any]:
         """
         计算当前周期状态
         
         Args:
-            cycle_length: 已废弃，仅为兼容性保留
             force_recalc: 是否强制重新计算（忽略缓存）
         """
         today = datetime.now()

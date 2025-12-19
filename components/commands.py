@@ -1,4 +1,6 @@
 import re
+import time
+from datetime import datetime
 from typing import Tuple, Dict, Any, Optional, ClassVar
 from src.plugin_system import PlusCommand, CommandArgs, ChatType
 from core.state_manager import get_state_manager, get_last_period_date, set_last_period_date, set_anchor_day
@@ -22,16 +24,13 @@ class PeriodStatusCommand(PlusCommand):
     async def execute(self, args: CommandArgs) -> Tuple[bool, Optional[str], bool]:
         """执行状态查询"""
         try:
-            # 获取配置
-            cycle_length = self.get_config("cycle.cycle_length", 28)
-            enabled = self.get_config("plugin.enabled", False)
-            
-            if not enabled:
+            # 检查插件是否启用
+            if not self.get_config("plugin.enabled", False):
                 await self.send_text("❌ 月经周期插件未启用")
                 return True, "插件未启用", True
                 
             # 计算当前状态
-            state = self.state_manager.calculate_current_state(cycle_length)
+            state = self.state_manager.calculate_current_state()
             
             # 获取并显示上次月经日期
             last_period_date = get_last_period_date()
@@ -215,37 +214,66 @@ class LustStatusCommand(PlusCommand):
     async def execute(self, args: CommandArgs) -> Tuple[bool, Optional[str], bool]:
         """执行状态查询"""
         try:
-            # 检查淫乱度系统是否启用
-            enabled = self.get_config("lust_system.enabled", False)
-            if not enabled:
+            # 1. 检查淫乱度系统是否启用
+            if not self.get_config("lust_system.enabled", False):
                 await self.send_text("❌ 淫乱度系统未启用")
                 return True, "系统未启用", True
             
-            # 获取用户ID
-            user_id = self.message.user_info.user_id if self.message.user_info else ""
+            # 2. 获取用户ID
+            user_id = self._get_user_id()
             if not user_id:
                 await self.send_text("❌ 无法识别用户")
                 return True, "用户ID缺失", True
             
-            # 获取当前月经周期状态（用于计算淫乱度）
-            state_manager = get_state_manager(get_config_func=self.get_config)
-            cycle_length = self.get_config("cycle.cycle_length", 28)
-            period_state = state_manager.calculate_current_state(cycle_length)
-            lust_level = self.lust_system.calculate_lust_level(period_state)
+            # 3. 获取月经周期状态和淫乱度
+            period_state, lust_level = self._get_period_and_lust()
+            if not period_state:
+                await self.send_text("❌ 无法获取月经周期状态")
+                return False, "周期状态获取失败", True
             
-            # 获取用户数据（传递period_state用于初始化）
-            data = self.lust_system.get_user_data(str(user_id), period_state)
+            # 4. 获取用户淫乱度数据（只读，不修改）
+            data = self._get_user_data_for_display(str(user_id), period_state)
             
-            # 生成报告
+            # 5. 生成并发送报告
             report = self._generate_status_report(data, lust_level, period_state)
             await self.send_text(report)
             
             return True, "发送淫乱度状态报告", True
             
         except Exception as e:
-            logger.error(f"查询淫乱度状态失败: {e}")
-            await self.send_text("❌ 查询失败，请检查配置")
+            logger.error(f"查询淫乱度状态失败: {e}", exc_info=True)
+            await self.send_text(f"❌ 查询失败: {str(e)}")
             return False, f"查询失败: {e}", True
+    
+    def _get_user_id(self) -> Optional[str]:
+        """获取用户ID"""
+        if not self.message or not self.message.user_info:
+            return None
+        return self.message.user_info.user_id
+    
+    def _get_period_and_lust(self) -> Tuple[Optional[Dict[str, Any]], float]:
+        """获取月经周期状态和淫乱度"""
+        try:
+            state_manager = get_state_manager(get_config_func=self.get_config)
+            period_state = state_manager.calculate_current_state()
+            lust_level = self.lust_system.calculate_lust_level(period_state)
+            return period_state, lust_level
+        except Exception as e:
+            logger.error(f"获取周期状态失败: {e}", exc_info=True)
+            return None, 0.0
+    
+    def _get_user_data_for_display(self, user_id: str, period_state: Dict[str, Any]) -> Dict[str, Any]:
+        """获取用于显示的用户数据（只读）"""
+        data = self.lust_system.get_user_data_readonly(user_id, period_state)
+        
+        # 调试日志：显示查询到的关键数据
+        logger.info(f"[查询命令] 用户{user_id}: "
+                   f"淫乱度={data.get('lust_level', 0):.2f}, "
+                   f"高潮值={data.get('orgasm_value', 0):.1f}, "
+                   f"剩余={data.get('remaining_orgasms', 0)}/{data.get('max_orgasms', 0)}, "
+                   f"阶段={data.get('current_stage', 'unknown')}")
+        
+        return data
     
     def _generate_status_report(self, data: Dict[str, Any], lust_level: float, period_state: Dict[str, Any]) -> str:
         """生成淫乱度状态报告"""
@@ -255,22 +283,32 @@ class LustStatusCommand(PlusCommand):
             "前戏": "😳",
             "正戏": "😍",
             "高潮": "🥵",
+            "高潮余韵期": "😌",
+            "体力恢复期": "😪",
             "冷却": "🥶"
         }
         
-        emoji = stage_emoji.get(data.get("current_stage", "被动未开始"), "❓")
+        current_stage = data.get("current_stage", "被动未开始")
+        emoji = stage_emoji.get(current_stage, "❓")
+        
+        # 格式化时间
+        last_updated = self._format_time(data.get("last_updated", 0))
+        
+        # 格式化高潮值（限制小数位）
+        orgasm_value = data.get("orgasm_value", 0)
+        orgasm_value_str = f"{orgasm_value:.1f}" if orgasm_value < 100 else f"{orgasm_value:.0f}"
         
         report = f"""
 {emoji} 淫乱度状态报告
 ━━━━━━━━━━━━━━━━━━
 📊 淫乱度: {lust_level:.2f}/1.0
-🔥 高潮值: {data.get('orgasm_value', 0):.1f}
-🎯 当前阶段: {data.get('current_stage', '未知')}
+🔥 高潮值: {orgasm_value_str}
+🎯 当前阶段: {current_stage}
 💦 剩余高潮次数: {data.get('remaining_orgasms', 0)} / {data.get('max_orgasms', 0)}
-⏱️ 上次更新: {self._format_time(data.get('last_updated', 0))}
+⏱️ 上次更新: {last_updated}
 
 📈 连续低评分次数: {data.get('consecutive_low_scores', 0)}
-🌀 衰减倍率: {data.get('termination_decay_multiplier', 1.0):.1f}
+🌀 衰减倍率: {data.get('termination_decay_multiplier', 1.0):.1f}x
 
 📅 月经周期阶段: {period_state.get('stage_name_cn', '未知')}
 📆 周期第 {period_state.get('current_day', 1)} 天
@@ -283,12 +321,13 @@ class LustStatusCommand(PlusCommand):
     
     def _format_time(self, timestamp: float) -> str:
         """格式化时间戳"""
-        if not timestamp:
+        if not timestamp or timestamp == 0:
             return "从未"
-        import time
-        from datetime import datetime
-        dt = datetime.fromtimestamp(timestamp)
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            dt = datetime.fromtimestamp(timestamp)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, OSError):
+            return "无效时间"
 
 
 class LustEndCommand(PlusCommand):
@@ -318,8 +357,16 @@ class LustEndCommand(PlusCommand):
                 await self.send_text("❌ 无法识别用户")
                 return True, "用户ID缺失", True
             
-            # 重置会话
-            self.lust_system.reset_session(str(user_id))
+            # 获取当前月经周期状态
+            try:
+                state_manager = get_state_manager(get_config_func=self.get_config)
+                period_state = state_manager.calculate_current_state()
+            except Exception as e:
+                logger.warning(f"获取周期状态失败，使用默认值: {e}")
+                period_state = None
+            
+            # 重置会话（传递period_state以正确计算淫乱度）
+            self.lust_system.reset_session(str(user_id), period_state)
             await self.send_text("✅ 淫乱度会话已重置，高潮值、阶段、连续低评分计数等已清零。")
             
             return True, "重置淫乱度会话", True

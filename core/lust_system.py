@@ -93,6 +93,69 @@ class LustSystem:
         """根据淫乱度计算最大高潮次数"""
         return max(1, int(lust_level * 5))
 
+    def _get_passive_threshold(self) -> float:
+        """获取被动阶段阈值"""
+        foreplay_threshold = self._get_config("lust_system.foreplay_threshold", 20.0)
+        passive_active_ratio = self._get_config("lust_system.passive_active_ratio", 0.3)
+        return foreplay_threshold * passive_active_ratio
+
+    def _calculate_initial_orgasm_value(self, lust_level: float) -> float:
+        """计算初始高潮值"""
+        foreplay_threshold = self._get_config("lust_system.foreplay_threshold", 20.0)
+        initial_ratio = self._get_config("lust_system.initial_ratio", 0.5)
+        return lust_level * foreplay_threshold * initial_ratio
+
+    def _ensure_data_integrity(self, data: Dict[str, Any], lust_level: float, allow_repair: bool = False) -> bool:
+        """确保数据完整性，返回是否修改了数据
+        
+        统一处理：
+        1. 同步lust_level
+        2. 同步max_orgasms（基于当前淫乱度）
+        3. 截断remaining_orgasms到合理范围
+        4. 修复过低的orgasm_value（仅在allow_repair=True时）
+        
+        Args:
+            data: 用户数据
+            lust_level: 当前淫乱度
+            allow_repair: 是否允许修复过低的orgasm_value（仅在初始化/重置/显式修复时为True）
+        """
+        modified = False
+        
+        # 1. 同步淫乱度
+        old_lust = data.get("lust_level")
+        if old_lust != lust_level:
+            data["lust_level"] = lust_level
+            modified = True
+        
+        # 2. 计算并同步max_orgasms（基于当前淫乱度）
+        correct_max = self.get_max_orgasms(lust_level)
+        stored_max = data.get("max_orgasms", 0)
+        if stored_max != correct_max:
+            data["max_orgasms"] = correct_max
+            modified = True
+            logger.debug(f"[数据完整性] max_orgasms: {stored_max} -> {correct_max}")
+        
+        # 3. 截断remaining_orgasms到[0, max_orgasms]
+        remaining = data.get("remaining_orgasms", correct_max)
+        clamped_remaining = max(0, min(remaining, correct_max))
+        if remaining != clamped_remaining:
+            data["remaining_orgasms"] = clamped_remaining
+            modified = True
+            logger.debug(f"[数据完整性] remaining_orgasms: {remaining} -> {clamped_remaining}")
+        
+        # 4. 修复过低的orgasm_value（仅在允许时执行，避免误判正常衰减）
+        if allow_repair:
+            orgasm_value = data.get("orgasm_value", 0)
+            passive_threshold = self._get_passive_threshold()
+            if orgasm_value < passive_threshold:
+                new_value = self._calculate_initial_orgasm_value(lust_level)
+                data["orgasm_value"] = new_value
+                data["current_stage"] = self._determine_stage(new_value)
+                modified = True
+                logger.info(f"[数据修复] orgasm_value: {orgasm_value:.1f} -> {new_value:.1f}, stage: {data['current_stage']}")
+        
+        return modified
+
     # ==================== LLM评分 ====================
 
     async def score_message_with_llm(self, text: str, lust_level: float) -> float:
@@ -235,33 +298,115 @@ class LustSystem:
 
     # ==================== 高潮值管理 ====================
 
-    def get_user_data(self, user_id: str, period_state: Dict[str, Any] = None) -> Dict[str, Any]:
+    def get_user_data(self, user_id: str, period_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """获取用户数据，如果不存在则初始化"""
         key = f"lust_system:user_data:{user_id}"
         data = plugin_storage.get(key, None)
+        
+        # 首次初始化
         if data is None:
-            data = self._create_default_user_data(user_id, period_state)
+            lust_level = self.calculate_lust_level(period_state) if period_state else 0.3
+            data = self._create_default_user_data(user_id, lust_level, period_state)
             plugin_storage.set(key, data)
+            return data
         
-        # 检查冷却期是否已过期
-        self._check_and_clear_cooldown(user_id, data)
+        # 检查并处理冷却期
+        self._check_and_handle_cooldown(user_id, data, period_state)
         
-        return data
-
-    def _create_default_user_data(self, user_id: str, period_state: Dict[str, Any] = None) -> Dict[str, Any]:
-        """创建默认用户数据"""
-        # 根据当前月经周期状态计算淫乱度，如果没有提供则使用默认值0.3
+        # 确保数据完整性（使用最新的period_state计算lust_level）
+        # ⚠️ allow_repair=False：不修复过低的orgasm_value，避免误判正常衰减
         if period_state:
             lust_level = self.calculate_lust_level(period_state)
-            logger.info(f"[初始化] 用户 {user_id} 根据月经周期计算初始淫乱度={lust_level:.2f}")
         else:
-            lust_level = 0.3
-            logger.warning(f"[初始化] 用户 {user_id} 未提供月经状态，使用默认淫乱度=0.3")
+            lust_level = data.get("lust_level", 0.3)
         
+        if self._ensure_data_integrity(data, lust_level, allow_repair=False):
+            plugin_storage.set(key, data)
+        
+        return data
+    
+    def get_user_data_readonly(self, user_id: str, period_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """只读获取用户数据，返回计算后的视图副本（不修改存储的原始数据）"""
+        key = f"lust_system:user_data:{user_id}"
+        stored_data = plugin_storage.get(key, None)
+        
+        # 首次初始化（即使是只读也需要创建）
+        if stored_data is None:
+            lust_level = self.calculate_lust_level(period_state) if period_state else 0.3
+            stored_data = self._create_default_user_data(user_id, lust_level, period_state)
+            plugin_storage.set(key, stored_data)
+            # 首次创建后直接返回（无需计算）
+            return stored_data.copy()
+        
+        # 创建副本，所有修改都在副本上进行
+        data = stored_data.copy()
+        
+        # 检查并处理冷却期（在副本上操作，如果需要保存则在这里保存原始数据）
+        now = time.time()
+        recovery_until = data.get("recovery_until")
+        afterglow_until = data.get("afterglow_until")
+        
+        if recovery_until is not None:
+            if now >= recovery_until:
+                # 恢复期已过，需要重新初始化（这个必须保存）
+                reinit_state = period_state or stored_data.get("last_period_state")
+                if reinit_state:
+                    lust_level = self.calculate_lust_level(reinit_state)
+                else:
+                    lust_level = stored_data.get("lust_level", 0.3)
+                
+                # 更新原始存储数据
+                stored_data["afterglow_until"] = None
+                stored_data["recovery_until"] = None
+                stored_data["afterglow_started_at"] = None
+                stored_data["consecutive_low_scores"] = 0
+                stored_data["termination_decay_multiplier"] = 1.0
+                stored_data["just_orgasmed"] = False
+                stored_data["termination_triggered"] = False
+                stored_data["lust_level"] = lust_level
+                stored_data["remaining_orgasms"] = self.get_max_orgasms(lust_level)
+                stored_data["max_orgasms"] = stored_data["remaining_orgasms"]
+                stored_data["orgasm_value"] = self._calculate_initial_orgasm_value(lust_level)
+                stored_data["current_stage"] = self._determine_stage(stored_data["orgasm_value"])
+                plugin_storage.set(key, stored_data)
+                logger.info(f"[恢复完成-只读查询触发] 用户 {user_id} 体力已完全恢复，重新初始化")
+                
+                # 返回更新后的副本
+                return stored_data.copy()
+            else:
+                # 修正当前阶段（在副本上）
+                if afterglow_until is not None and now < afterglow_until:
+                    if data.get("current_stage") != "高潮余韵期":
+                        data["current_stage"] = "高潮余韵期"
+                else:
+                    if data.get("current_stage") != "体力恢复期":
+                        data["current_stage"] = "体力恢复期"
+                        data["afterglow_until"] = None
+        
+        # 计算并更新副本中的淫乱度和max_orgasms（不保存）
+        if period_state:
+            lust_level = self.calculate_lust_level(period_state)
+            data["lust_level"] = lust_level
+            new_max_orgasms = self.get_max_orgasms(lust_level)
+            data["max_orgasms"] = new_max_orgasms
+            
+            # ✅ 根据当前高潮值和新的max_orgasms重新计算remaining_orgasms
+            orgasm_threshold = self._get_config("lust_system.orgasm_threshold", 100.0)
+            orgasm_value = data.get("orgasm_value", 0.0)
+            used_orgasms = int(orgasm_value / orgasm_threshold)
+            data["remaining_orgasms"] = max(0, new_max_orgasms - used_orgasms)
+            
+            logger.debug(f"[只读查询] 重新计算: lust={lust_level:.2f}, max={new_max_orgasms}, "
+                        f"orgasm_value={orgasm_value:.1f}, used={used_orgasms}, remaining={data['remaining_orgasms']}")
+        
+        return data  # 返回副本，外部可以随意使用
+
+    def _create_default_user_data(self, user_id: str, lust_level: float, period_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """创建默认用户数据"""
         max_orgasms = self.get_max_orgasms(lust_level)
-        foreplay_threshold = self._get_config("lust_system.foreplay_threshold", 20.0)
-        initial_ratio = self._get_config("lust_system.initial_ratio", 0.5)
-        initial_orgasm_value = lust_level * foreplay_threshold * initial_ratio
+        initial_orgasm_value = self._calculate_initial_orgasm_value(lust_level)
+
+        logger.info(f"[初始化] 用户 {user_id}: 淫乱度={lust_level:.2f}, max_orgasms={max_orgasms}")
 
         return {
             "orgasm_value": initial_orgasm_value,
@@ -272,9 +417,9 @@ class LustSystem:
             "current_stage": self._determine_stage(initial_orgasm_value),
             "consecutive_low_scores": 0,
             "termination_decay_multiplier": 1.0,
-            "termination_triggered": False,  # 性交终止判定标记
+            "termination_triggered": False,
             "lust_level": lust_level,
-            "last_period_state": period_state,  # 保存当前周期状态
+            "last_period_state": period_state,
         }
 
     def save_user_data(self, user_id: str, data: Dict[str, Any]):
@@ -301,9 +446,15 @@ class LustSystem:
         else:
             return "高潮"
 
-    def update_orgasm_value(self, user_id: str, score: float) -> Dict[str, Any]:
-        """更新用户的高潮值（考虑时间衰减）"""
-        data = self.get_user_data(user_id)
+    def update_orgasm_value(self, user_id: str, score: float, period_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """更新用户的高潮值（考虑时间衰减）
+        
+        Args:
+            user_id: 用户ID
+            score: 评分
+            period_state: 当前月经周期状态（可选，用于初始化）
+        """
+        data = self.get_user_data(user_id, period_state)
         now = time.time()
         last_updated = data.get("last_updated", now)
         delta_seconds = max(0, now - last_updated)
@@ -339,10 +490,14 @@ class LustSystem:
         data["just_orgasmed"] = True
         data["orgasm_triggered_at"] = time.time()
         
-        # 剩余高潮次数减1
-        remaining = data.get("remaining_orgasms", 1)
-        if remaining > 0:
-            data["remaining_orgasms"] = remaining - 1
+        # 剩余高潮次数减1（确保为整数且不为负）
+        try:
+            remaining = int(data.get("remaining_orgasms", 0))
+        except Exception:
+            remaining = 0
+
+        remaining = max(0, remaining - 1)
+        data["remaining_orgasms"] = remaining
         
         # 高潮后恢复到正戏中段
         main_threshold = self._get_config("lust_system.main_threshold", 60.0)
@@ -354,9 +509,12 @@ class LustSystem:
         data["consecutive_low_scores"] = 0
         data["termination_decay_multiplier"] = 1.0
 
-        # 检查是否体力不支
-        if data["remaining_orgasms"] <= 0:
-            self._start_afterglow(user_id, data)
+        # 检查是否体力不支：若没有剩余次数，进入余韵期（并在内部设置恢复期）
+        if data.get("remaining_orgasms", 0) <= 0:
+            try:
+                self._start_afterglow(user_id, data)
+            except Exception as e:
+                logger.error(f"[触发余韵期失败] 用户{user_id}: {e}")
 
     def _start_afterglow(self, user_id: str, data: Dict[str, Any]):
         """开始高潮余韵期"""
@@ -372,43 +530,57 @@ class LustSystem:
         data["orgasm_value"] = 0
         logger.info(f"[余韵期] 用户 {user_id} 进入高潮余韵期 {afterglow_duration}秒，随后恢复期 {recovery_duration}秒")
     
-    def _check_and_clear_cooldown(self, user_id: str, data: Dict[str, Any]):
-        """检查并更新余韵期/恢复期状态"""
+    def _check_and_handle_cooldown(self, user_id: str, data: Dict[str, Any], period_state: Optional[Dict[str, Any]] = None):
+        """检查并处理余韵期/恢复期状态"""
         now = time.time()
         
-        # 检查是否在余韵期或恢复期
         afterglow_until = data.get("afterglow_until")
         recovery_until = data.get("recovery_until")
         
         if recovery_until is not None:
             if now >= recovery_until:
-                # 恢复期已过，完全恢复
-                logger.info(f"[恢复完成] 用户 {user_id} 体力已完全恢复")
+                # 恢复期已过，执行重新初始化
+                logger.info(f"[恢复完成] 用户 {user_id} 体力已完全恢复，重新初始化")
                 
-                # 清除所有恢复期标记
+                # 清除恢复期标记
                 data["afterglow_until"] = None
                 data["recovery_until"] = None
                 data["afterglow_started_at"] = None
-                
-                # 标记需要重新初始化
-                data["need_reinit_after_cooldown"] = True
-                
-                # 重置其他状态
                 data["consecutive_low_scores"] = 0
                 data["termination_decay_multiplier"] = 1.0
                 data["just_orgasmed"] = False
-                data["termination_triggered"] = False  # 清除终止判定标记
+                data["termination_triggered"] = False
                 
-                # 保存更新后的数据
+                # 执行重新初始化
+                reinit_state = period_state or data.get("last_period_state")
+                if reinit_state:
+                    lust_level = self.calculate_lust_level(reinit_state)
+                else:
+                    lust_level = data.get("lust_level", 0.3)
+                
+                # 重置数据
+                data["lust_level"] = lust_level
+                data["remaining_orgasms"] = self.get_max_orgasms(lust_level)
+                data["max_orgasms"] = data["remaining_orgasms"]
+                data["orgasm_value"] = self._calculate_initial_orgasm_value(lust_level)
+                data["current_stage"] = self._determine_stage(data["orgasm_value"])
+                
                 self.save_user_data(user_id, data)
-            elif afterglow_until is not None and now >= afterglow_until and data.get("current_stage") == "高潮余韵期":
-                # 余韵期结束，进入恢复期
-                logger.info(f"[进入恢复期] 用户 {user_id} 余韵期结束，进入体力恢复期")
-                data["current_stage"] = "体力恢复期"
-                data["afterglow_until"] = None  # 清除余韵期标记
-                self.save_user_data(user_id, data)
+            else:
+                # 恢复期未结束，修正当前阶段
+                if afterglow_until is not None and now < afterglow_until:
+                    if data.get("current_stage") != "高潮余韵期":
+                        logger.info(f"[状态修正] 用户 {user_id} 修正为高潮余韵期")
+                        data["current_stage"] = "高潮余韵期"
+                        self.save_user_data(user_id, data)
+                else:
+                    if data.get("current_stage") != "体力恢复期":
+                        logger.info(f"[状态修正] 用户 {user_id} 修正为体力恢复期")
+                        data["current_stage"] = "体力恢复期"
+                        data["afterglow_until"] = None
+                        self.save_user_data(user_id, data)
 
-    def process_score(self, user_id: str, score: float, period_state: Dict[str, Any] = None) -> Dict[str, Any]:
+    def process_score(self, user_id: str, score: float, period_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """处理评分，更新连续低评分计数，更新高潮值
         
         Args:
@@ -468,8 +640,8 @@ class LustSystem:
                 data["termination_decay_multiplier"] = 1.0
                 data["termination_triggered"] = False  # 重置终止标记
 
-        # 更新高潮值
-        return self.update_orgasm_value(user_id, score)
+        # 更新高潮值（传递 period_state 确保初始化时使用正确的淫乱度）
+        return self.update_orgasm_value(user_id, score, period_state)
 
     # ==================== 性欲指导生成 ====================
 
@@ -623,88 +795,48 @@ class LustSystem:
         
         guidance = guidance_map.get(current_stage, "性欲状态正常。")
 
-        # 体力状态提示（仅在体力有消耗但未耗尽时添加）
+        # 体力状态提示（在所有正常阶段显示，不限制阶段类型）
+        # 只要体力有消耗且未完全耗尽，就应该显示体力状态
         if max_orgasms is not None and remaining_orgasms < max_orgasms and remaining_orgasms > 0:
-            # 体力状态根据阶段和剩余次数综合判断
-            if current_stage in ["正戏", "前戏"]:
-                # 高性欲阶段的体力提示
+            # 排除余韵期和恢复期（这两个阶段有专门的提示词）
+            if current_stage not in ["高潮余韵期", "体力恢复期"]:
+                # 根据剩余次数生成体力提示
+                stamina_ratio = remaining_orgasms / max_orgasms if max_orgasms > 0 else 1.0
+                
                 if remaining_orgasms == 1:
-                    guidance += " 体力接近极限，虽然性欲依然强烈，但身体已经很疲惫，需要注意节制。"
-                elif remaining_orgasms == 2:
-                    guidance += " 体力消耗较大，身体开始感到疲惫，但仍有余力继续。"
-            elif current_stage in ["主动未开始", "被动未开始"]:
-                # 低性欲阶段的体力提示
-                if remaining_orgasms == 1:
-                    guidance += " 身体已经相当疲惫，体力接近极限。"
-                elif remaining_orgasms == 2:
-                    guidance += " 身体感到有些疲惫。"
+                    # 只剩最后一次：体力接近极限
+                    if current_stage in ["正戏", "前戏"]:
+                        guidance += "\n\n【体力状态】体力接近极限，虽然性欲依然强烈，但身体已经很疲惫。如果再次达到高潮，将进入体力恢复期。"
+                    else:
+                        guidance += "\n\n【体力状态】身体已经相当疲惫，体力接近极限。如果再次达到高潮，将进入体力恢复期。"
+                elif stamina_ratio <= 0.4:
+                    # 剩余 ≤ 40%：体力消耗较大
+                    guidance += "\n\n【体力状态】体力消耗较大，身体开始感到疲惫，但仍有余力继续。"
+                elif stamina_ratio <= 0.6:
+                    # 剩余 ≤ 60%：体力有所消耗
+                    guidance += "\n\n【体力状态】体力有所消耗，身体感到有些疲倦。"
 
         # 根据淫乱度调整语气（只在非体力耗尽状态添加）
         if remaining_orgasms > 0:
             if lust_level >= 0.7:
-                guidance += " 当前淫乱度较高，性欲表现会更加主动、直接和强烈。"
+                guidance += "\n\n【淫乱度影响】当前淫乱度较高，性欲表现会更加主动、直接和强烈。"
             elif lust_level <= 0.3:
-                guidance += " 当前淫乱度较低，性欲表现相对被动、温和和克制。"
+                guidance += "\n\n【淫乱度影响】当前淫乱度较低，性欲表现相对被动、温和和克制。"
 
         return guidance
     
 
-    def get_sexual_guidance_for_prompt(
-        self,
-        user_id: str,
-        period_state: Dict[str, Any]
-    ) -> str:
-        """
-        【只读模式】为Prompt生成性欲指导，不修改用户数据
-        专门用于Prompt注入，避免覆盖LLM评分后的状态更新
-        """
-        # 计算当前淫乱度
+    def get_sexual_guidance_for_prompt(self, user_id: str, period_state: Dict[str, Any]) -> str:
+        """为Prompt生成性欲指导（只读模式，不修改数据）"""
         lust_level = self.calculate_lust_level(period_state)
+        data = self.get_user_data_readonly(user_id, period_state)
         
-        # 只读取数据，不修改（传递period_state用于初始化）
-        data = self.get_user_data(user_id, period_state)
-        
-        # 如果需要冷却后初始化，先执行（这会修改数据）
-        if data.get("need_reinit_after_cooldown"):
-            self._perform_cooldown_reinit(user_id, data, period_state, lust_level)
-            # 重新读取更新后的数据（不需要再次传递period_state，因为已经初始化）
-            data = self.get_user_data(user_id)
-        
-        # 🔧 关键修复：检查并修复过低的高潮值（即使在只读模式下）
-        # 这是为了确保提示词显示正确的阶段
-        old_orgasm_value = data.get("orgasm_value", 0)
-        foreplay_threshold = self._get_config("lust_system.foreplay_threshold", 20.0)
-        passive_active_ratio = self._get_config("lust_system.passive_active_ratio", 0.3)
-        passive_threshold = foreplay_threshold * passive_active_ratio
-        
-        if old_orgasm_value < passive_threshold:
-            initial_ratio = self._get_config("lust_system.initial_ratio", 0.5)
-            new_orgasm_value = lust_level * foreplay_threshold * initial_ratio
-            data["orgasm_value"] = new_orgasm_value
-            data["current_stage"] = self._determine_stage(new_orgasm_value)
-            data["lust_level"] = lust_level
-            data["last_period_state"] = period_state
-            self.save_user_data(user_id, data)
-            logger.info(f"[Prompt修复] 用户{user_id}: 淫乱度={lust_level:.2f}, "
-                       f"高潮值: {old_orgasm_value:.1f}→{new_orgasm_value:.1f}, "
-                       f"阶段: {data['current_stage']}")
-        
-        # 检查淫乱度是否需要更新（但不立即更新，避免覆盖评分后的状态）
-        old_lust = data.get("lust_level", 0)
-        if abs(old_lust - lust_level) > 0.01:
-            # 记录需要更新，但不立即执行
-            logger.debug(f"[Prompt只读] 检测到淫乱度变化 {old_lust:.2f}→{lust_level:.2f}，将在下次评分时更新")
-        
-        # 使用最新的淫乱度计算指导（但使用存储的remaining_orgasms等状态）
-        current_lust = lust_level  # 使用最新计算的淫乱度
-        
-        logger.debug(f"[Prompt只读] 用户{user_id}: 淫乱度={current_lust:.2f}, "
+        logger.debug(f"[Prompt生成] 用户{user_id}: 淫乱度={lust_level:.2f}, "
                     f"剩余高潮={data.get('remaining_orgasms', 0)}/{data.get('max_orgasms', 0)}, "
-                    f"当前阶段={data.get('current_stage', 'unknown')}, "
-                    f"高潮值={data.get('orgasm_value', 0):.1f}")
+                    f"阶段={data.get('current_stage', 'unknown')}")
         
         guidance = self.get_sexual_guidance_adjustment(
-            lust_level=current_lust,
+            lust_level=lust_level,
             orgasm_value=data.get("orgasm_value", 0.0),
             remaining_orgasms=data.get("remaining_orgasms", 0),
             current_stage=data.get("current_stage", "被动未开始"),
@@ -778,82 +910,24 @@ class LustSystem:
         
         return guidance
     
-    def _perform_cooldown_reinit(
-        self,
-        user_id: str,
-        data: Dict[str, Any],
-        period_state: Dict[str, Any],
-        lust_level: float
-    ):
-        """执行冷却后的重新初始化"""
-        logger.info(f"[冷却后初始化] 用户 {user_id} 使用最新月经周期数据重新初始化")
-        
-        # 使用最新的period_state和lust_level重新初始化
-        data["lust_level"] = lust_level
-        data["last_period_state"] = period_state
-        
-        # 重置高潮次数
-        data["remaining_orgasms"] = self.get_max_orgasms(lust_level)
-        data["max_orgasms"] = data["remaining_orgasms"]
-        
-        # 重置高潮值到初始状态
-        foreplay_threshold = self._get_config("lust_system.foreplay_threshold", 20.0)
-        initial_ratio = self._get_config("lust_system.initial_ratio", 0.5)
-        data["orgasm_value"] = lust_level * foreplay_threshold * initial_ratio
-        
-        # 更新阶段
-        data["current_stage"] = self._determine_stage(data["orgasm_value"])
-        
-        # 清除重新初始化标记
-        data["need_reinit_after_cooldown"] = False
-        
-        self.save_user_data(user_id, data)
-        logger.info(f"[冷却后初始化] 淫乱度={lust_level:.2f}, 剩余高潮={data['remaining_orgasms']}, 阶段={data['current_stage']}")
-    
-    def update_lust_from_period_state(
-        self,
-        user_id: str,
-        period_state: Dict[str, Any]
-    ):
-        """
-        【写入模式】从月经周期状态更新淫乱度数据
-        在LLM评分时调用，确保淫乱度和最大高潮次数保持同步
-        """
+
+    def update_lust_from_period_state(self, user_id: str, period_state: Dict[str, Any]):
+        """从月经周期状态更新淫乱度数据"""
         lust_level = self.calculate_lust_level(period_state)
-        data = self.get_user_data(user_id, period_state)  # 传递period_state用于初始化
+        data = self.get_user_data(user_id, period_state)
         
         old_lust = data.get("lust_level", 0)
-        old_orgasm_value = data.get("orgasm_value", 0)
+        
+        # 更新基本信息
         data["last_period_state"] = period_state
         data["lust_level"] = lust_level
         
-        # 获取阈值配置
-        foreplay_threshold = self._get_config("lust_system.foreplay_threshold", 20.0)
-        passive_active_ratio = self._get_config("lust_system.passive_active_ratio", 0.3)
-        passive_threshold = foreplay_threshold * passive_active_ratio
-        initial_ratio = self._get_config("lust_system.initial_ratio", 0.5)
+        # 统一通过_ensure_data_integrity处理所有同步（不允许修复）
+        self._ensure_data_integrity(data, lust_level, allow_repair=False)
         
-        # 🔧 关键修复：无论淫乱度是否变化，只要高潮值过低就重新初始化
-        # 这是为了修复旧数据（淫乱度正确但高潮值为0的情况）
-        if old_orgasm_value < passive_threshold:
-            new_orgasm_value = lust_level * foreplay_threshold * initial_ratio
-            data["orgasm_value"] = new_orgasm_value
-            data["current_stage"] = self._determine_stage(new_orgasm_value)
-            logger.info(f"[高潮值修复] 用户{user_id}: 淫乱度={lust_level:.2f}, "
-                       f"高潮值: {old_orgasm_value:.1f}→{new_orgasm_value:.1f}, "
-                       f"阶段: {data['current_stage']}")
-        
-        # 如果淫乱度发生变化，需要重新计算高潮次数上限
         if abs(old_lust - lust_level) > 0.01:
-            new_max_orgasms = self.get_max_orgasms(lust_level)
-            old_max = data.get("max_orgasms", 0)
-            # 如果最大值增加了，同步增加剩余次数
-            if new_max_orgasms > old_max:
-                diff = new_max_orgasms - old_max
-                data["remaining_orgasms"] = data.get("remaining_orgasms", 0) + diff
-            data["max_orgasms"] = new_max_orgasms
-            logger.info(f"[淫乱度更新] 用户{user_id}: {old_lust:.2f}→{lust_level:.2f}, "
-                       f"最大高潮次数={new_max_orgasms}")
+            logger.info(f"[淫乱度更新] 用户{user_id}: {old_lust:.2f} -> {lust_level:.2f}, "
+                       f"max_orgasms={data['max_orgasms']}, remaining={data['remaining_orgasms']}")
         
         self.save_user_data(user_id, data)
 
@@ -863,8 +937,27 @@ class LustSystem:
         """从插件配置中获取值"""
         return self.get_config(key, default)
 
-    def reset_session(self, user_id: str):
-        """重置会话"""
-        data = self._create_default_user_data(user_id)
+    def reset_session(self, user_id: str, period_state: Optional[Dict[str, Any]] = None):
+        """重置会话
+        
+        Args:
+            user_id: 用户ID
+            period_state: 月经周期状态（应始终传递以获取正确的淫乱度）
+        """
+        # 如果提供了period_state，使用它计算淫乱度；否则从存储读取
+        if period_state:
+            lust_level = self.calculate_lust_level(period_state)
+        else:
+            # 尝试从存储读取last_period_state
+            key = f"lust_system:user_data:{user_id}"
+            stored_data = plugin_storage.get(key, None)
+            if stored_data and stored_data.get("last_period_state"):
+                lust_level = self.calculate_lust_level(stored_data["last_period_state"])
+                logger.warning(f"[重置] period_state未提供，使用存储的last_period_state")
+            else:
+                lust_level = 0.3
+                logger.warning(f"[重置] period_state未提供且无存储状态，使用默认值0.3")
+        
+        data = self._create_default_user_data(user_id, lust_level, period_state)
         self.save_user_data(user_id, data)
-        logger.info(f"[重置] 用户 {user_id} 会话已重置")
+        logger.info(f"[重置] 用户 {user_id} 会话已重置，淫乱度={lust_level:.2f}")
