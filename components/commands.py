@@ -246,16 +246,30 @@ class LustStatusCommand(PlusCommand):
             return False, f"查询失败: {e}", True
     
     def _get_user_id(self) -> Optional[str]:
-        """获取人格ID（淫乱度作用在AI人格上，不是用户上）"""
+        """获取人格ID（淫乱度作用在AI人格上，不是用户上）
+        
+        从storage读取活跃的person_id，而不是自己计算。
+        这确保命令系统和消息处理器使用完全相同的person_id。
+        """
         try:
-            from src.plugin_system.apis import person_api
+            from src.plugin_system.apis import storage_api
+            import time
+            
             if not self.message or not self.message.user_info:
                 return None
-            # 获取当前对话的 person_id
-            platform = self.message.user_info.platform
-            user_id = self.message.user_info.user_id
-            person_id = person_api.get_person_id_sync(platform, user_id)
-            return person_id
+            
+            # 从storage读取最近活跃的person_id
+            plugin_storage = storage_api.get_local_storage("mofox_period_plugin")
+            person_id = plugin_storage.get("active_person_id", None)
+            last_active_time = plugin_storage.get("active_person_timestamp", 0)
+            
+            # 检查是否有效（60秒内活跃过）
+            if person_id and (time.time() - last_active_time) < 60:
+                return person_id
+            else:
+                logger.warning(f"[淫乱度查询] 未找到活跃的person_id（上次活跃: {time.time() - last_active_time:.0f}秒前）")
+                return None
+                
         except Exception as e:
             logger.error(f"获取person_id失败: {e}")
             return None
@@ -360,18 +374,25 @@ class LustEndCommand(PlusCommand):
                 await self.send_text("❌ 淫乱度系统未启用")
                 return True, "系统未启用", True
             
-            # 获取人格ID（淫乱度作用在AI人格上）
+            # 获取人格ID（从storage读取，确保和消息处理器使用相同ID）
             try:
-                from src.plugin_system.apis import person_api
+                from src.plugin_system.apis import storage_api
+                import time
+                
                 if not self.message.user_info:
                     await self.send_text("❌ 无法识别用户")
                     return True, "用户信息缺失", True
-                platform = self.message.user_info.platform
-                qq_user_id = self.message.user_info.user_id
-                person_id = person_api.get_person_id_sync(platform, qq_user_id)
-                if not person_id:
-                    await self.send_text("❌ 无法获取人格ID")
-                    return True, "person_id缺失", True
+                
+                # 从storage读取最近活跃的person_id
+                plugin_storage = storage_api.get_local_storage("mofox_period_plugin")
+                person_id = plugin_storage.get("active_person_id", None)
+                last_active_time = plugin_storage.get("active_person_timestamp", 0)
+                
+                # 检查是否有效（60秒内活跃过）
+                if not person_id or (time.time() - last_active_time) >= 60:
+                    await self.send_text("❌ 请先发送消息激活淫乱度系统")
+                    return True, "person_id未激活", True
+                    
             except Exception as e:
                 logger.error(f"获取person_id失败: {e}")
                 await self.send_text("❌ 系统错误")
