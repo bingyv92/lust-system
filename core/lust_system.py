@@ -670,6 +670,25 @@ class LustSystem:
             # 重新读取更新后的数据（不需要再次传递period_state，因为已经初始化）
             data = self.get_user_data(user_id)
         
+        # 🔧 关键修复：检查并修复过低的高潮值（即使在只读模式下）
+        # 这是为了确保提示词显示正确的阶段
+        old_orgasm_value = data.get("orgasm_value", 0)
+        foreplay_threshold = self._get_config("lust_system.foreplay_threshold", 20.0)
+        passive_active_ratio = self._get_config("lust_system.passive_active_ratio", 0.3)
+        passive_threshold = foreplay_threshold * passive_active_ratio
+        
+        if old_orgasm_value < passive_threshold:
+            initial_ratio = self._get_config("lust_system.initial_ratio", 0.5)
+            new_orgasm_value = lust_level * foreplay_threshold * initial_ratio
+            data["orgasm_value"] = new_orgasm_value
+            data["current_stage"] = self._determine_stage(new_orgasm_value)
+            data["lust_level"] = lust_level
+            data["last_period_state"] = period_state
+            self.save_user_data(user_id, data)
+            logger.info(f"[Prompt修复] 用户{user_id}: 淫乱度={lust_level:.2f}, "
+                       f"高潮值: {old_orgasm_value:.1f}→{new_orgasm_value:.1f}, "
+                       f"阶段: {data['current_stage']}")
+        
         # 检查淫乱度是否需要更新（但不立即更新，避免覆盖评分后的状态）
         old_lust = data.get("lust_level", 0)
         if abs(old_lust - lust_level) > 0.01:
@@ -804,8 +823,25 @@ class LustSystem:
         data = self.get_user_data(user_id, period_state)  # 传递period_state用于初始化
         
         old_lust = data.get("lust_level", 0)
+        old_orgasm_value = data.get("orgasm_value", 0)
         data["last_period_state"] = period_state
         data["lust_level"] = lust_level
+        
+        # 获取阈值配置
+        foreplay_threshold = self._get_config("lust_system.foreplay_threshold", 20.0)
+        passive_active_ratio = self._get_config("lust_system.passive_active_ratio", 0.3)
+        passive_threshold = foreplay_threshold * passive_active_ratio
+        initial_ratio = self._get_config("lust_system.initial_ratio", 0.5)
+        
+        # 🔧 关键修复：无论淫乱度是否变化，只要高潮值过低就重新初始化
+        # 这是为了修复旧数据（淫乱度正确但高潮值为0的情况）
+        if old_orgasm_value < passive_threshold:
+            new_orgasm_value = lust_level * foreplay_threshold * initial_ratio
+            data["orgasm_value"] = new_orgasm_value
+            data["current_stage"] = self._determine_stage(new_orgasm_value)
+            logger.info(f"[高潮值修复] 用户{user_id}: 淫乱度={lust_level:.2f}, "
+                       f"高潮值: {old_orgasm_value:.1f}→{new_orgasm_value:.1f}, "
+                       f"阶段: {data['current_stage']}")
         
         # 如果淫乱度发生变化，需要重新计算高潮次数上限
         if abs(old_lust - lust_level) > 0.01:
