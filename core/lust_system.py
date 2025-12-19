@@ -113,6 +113,7 @@ class LustSystem:
         2. 同步max_orgasms（基于当前淫乱度）
         3. 截断remaining_orgasms到合理范围
         4. 修复过低的orgasm_value（仅在allow_repair=True时）
+        5. 检测淫乱度大幅变化并重新初始化orgasm_value
         
         Args:
             data: 用户数据
@@ -121,11 +122,17 @@ class LustSystem:
         """
         modified = False
         
-        # 1. 同步淫乱度
-        old_lust = data.get("lust_level")
+        # 记录初始orgasm_value用于调试
+        initial_orgasm = data.get("orgasm_value", 0)
+        
+        # 1. 同步淫乱度，并检测是否有大幅变化
+        old_lust = data.get("lust_level", 0.3)
+        lust_changed_significantly = abs(old_lust - lust_level) > 0.3  # 淫乱度变化超过0.3（比如从0.3到1.0）
+        
         if old_lust != lust_level:
             data["lust_level"] = lust_level
             modified = True
+            logger.debug(f"[数据完整性] lust_level: {old_lust:.2f} -> {lust_level:.2f}")
         
         # 2. 计算并同步max_orgasms（基于当前淫乱度）
         correct_max = self.get_max_orgasms(lust_level)
@@ -153,6 +160,29 @@ class LustSystem:
                 data["current_stage"] = self._determine_stage(new_value)
                 modified = True
                 logger.info(f"[数据修复] orgasm_value: {orgasm_value:.1f} -> {new_value:.1f}, stage: {data['current_stage']}")
+        
+        # 5. 如果淫乱度大幅变化（比如周期阶段切换），重新初始化orgasm_value到合理范围
+        # 这避免了旧的低orgasm_value导致错误的阶段判定
+        # ⚠️ 但不要在正常衰减场景下误判（例如从10.0衰减到5.0）
+        if lust_changed_significantly:
+            orgasm_value = data.get("orgasm_value", 0)
+            expected_initial = self._calculate_initial_orgasm_value(lust_level)
+            passive_threshold = self._get_passive_threshold()
+            
+            # 只有在orgasm_value远低于被动阈值时才重新初始化
+            # 这避免了误判正常的衰减（比如从10降到5仍在合理范围内）
+            if orgasm_value < passive_threshold:
+                data["orgasm_value"] = expected_initial
+                data["current_stage"] = self._determine_stage(expected_initial)
+                modified = True
+                logger.warning(f"[淫乱度大变] lust从{old_lust:.2f}→{lust_level:.2f}，重置orgasm_value: {orgasm_value:.1f} -> {expected_initial:.1f}, stage: {data['current_stage']}, passive_threshold={passive_threshold:.1f}")
+        
+        # 调试日志：如果orgasm_value被修改，记录详细信息
+        final_orgasm = data.get("orgasm_value", 0)
+        if final_orgasm != initial_orgasm:
+            import traceback
+            stack = "".join(traceback.format_stack()[:-1])
+            logger.warning(f"[完整性检查] orgasm_value被修改: {initial_orgasm:.1f} -> {final_orgasm:.1f}\n调用栈:\n{stack}")
         
         return modified
 
@@ -405,8 +435,11 @@ class LustSystem:
         """创建默认用户数据"""
         max_orgasms = self.get_max_orgasms(lust_level)
         initial_orgasm_value = self._calculate_initial_orgasm_value(lust_level)
+        initial_stage = self._determine_stage(initial_orgasm_value)
 
-        logger.info(f"[初始化] 用户 {user_id}: 淫乱度={lust_level:.2f}, max_orgasms={max_orgasms}")
+        import traceback
+        stack = "".join(traceback.format_stack())
+        logger.warning(f"[创建用户数据] 用户 {user_id}: 淫乱度={lust_level:.2f}, orgasm_value={initial_orgasm_value:.1f}, stage={initial_stage}, max_orgasms={max_orgasms}\n调用栈:\n{stack}")
 
         return {
             "orgasm_value": initial_orgasm_value,
@@ -414,7 +447,7 @@ class LustSystem:
             "max_orgasms": max_orgasms,
             "last_updated": time.time(),
             "cooldown_until": None,
-            "current_stage": self._determine_stage(initial_orgasm_value),
+            "current_stage": initial_stage,
             "consecutive_low_scores": 0,
             "termination_decay_multiplier": 1.0,
             "termination_triggered": False,
@@ -459,20 +492,35 @@ class LustSystem:
         last_updated = data.get("last_updated", now)
         delta_seconds = max(0, now - last_updated)
 
+        # 计算当前淫乱度的初始值（作为衰减的最低值）
+        lust_level = data.get("lust_level", 0.3)
+        initial_orgasm_value = self._calculate_initial_orgasm_value(lust_level)
+        
         # 应用时间衰减
         decay_rate = self._get_config("lust_system.decay_rate", 0.1)
         termination_multiplier = data.get("termination_decay_multiplier", 1.0)
         decay = decay_rate * delta_seconds * termination_multiplier
-        orgasm_value = max(0, data.get("orgasm_value", 0) - decay)
+        old_orgasm = data.get("orgasm_value", 0)
+        orgasm_value = old_orgasm - decay
+        
+        # 🔧 关键修复：衰减后的最低值应该是当前淫乱度决定的初始值，不能再低
+        # 这确保了无论时间过多久，orgasm_value 都不会低于应有的初始状态
+        if orgasm_value < initial_orgasm_value:
+            logger.info(f"[衰减保底] 用户 {user_id}: 衰减后{orgasm_value:.1f} < 初始值{initial_orgasm_value:.1f}，保底为初始值（decay={decay:.1f}）")
+            orgasm_value = initial_orgasm_value
 
         # 添加新得分（score已经包含淫乱度加成）
         base_score_weight = self._get_config("lust_system.base_score_weight", 1.0)
         orgasm_value += score * base_score_weight
 
         # 更新数据
+        old_value = data.get("orgasm_value", 0)
         data["orgasm_value"] = orgasm_value
         data["last_updated"] = now
         data["current_stage"] = self._determine_stage(orgasm_value)
+        
+        if abs(old_value - orgasm_value) > 1.0:
+            logger.warning(f"[更新高潮值] 用户 {user_id}: {old_value:.1f} -> {orgasm_value:.1f}, score={score:.1f}, decay={decay:.1f}")
 
         # 检查是否触发高潮
         orgasm_threshold = self._get_config("lust_system.orgasm_threshold", 100.0)
@@ -562,8 +610,13 @@ class LustSystem:
                 data["lust_level"] = lust_level
                 data["remaining_orgasms"] = self.get_max_orgasms(lust_level)
                 data["max_orgasms"] = data["remaining_orgasms"]
-                data["orgasm_value"] = self._calculate_initial_orgasm_value(lust_level)
+                new_orgasm = self._calculate_initial_orgasm_value(lust_level)
+                data["orgasm_value"] = new_orgasm
                 data["current_stage"] = self._determine_stage(data["orgasm_value"])
+                
+                import traceback
+                stack = "".join(traceback.format_stack())
+                logger.warning(f"[恢复期重置] 用户 {user_id}: orgasm_value重置为 {new_orgasm:.1f}\n调用栈:\n{stack}")
                 
                 self.save_user_data(user_id, data)
             else:

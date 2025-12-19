@@ -246,10 +246,19 @@ class LustStatusCommand(PlusCommand):
             return False, f"查询失败: {e}", True
     
     def _get_user_id(self) -> Optional[str]:
-        """获取用户ID"""
-        if not self.message or not self.message.user_info:
+        """获取人格ID（淫乱度作用在AI人格上，不是用户上）"""
+        try:
+            from src.plugin_system.apis import person_api
+            if not self.message or not self.message.user_info:
+                return None
+            # 获取当前对话的 person_id
+            platform = self.message.user_info.platform
+            user_id = self.message.user_info.user_id
+            person_id = person_api.get_person_id_sync(platform, user_id)
+            return person_id
+        except Exception as e:
+            logger.error(f"获取person_id失败: {e}")
             return None
-        return self.message.user_info.user_id
     
     def _get_period_and_lust(self) -> Tuple[Optional[Dict[str, Any]], float]:
         """获取月经周期状态和淫乱度"""
@@ -351,11 +360,22 @@ class LustEndCommand(PlusCommand):
                 await self.send_text("❌ 淫乱度系统未启用")
                 return True, "系统未启用", True
             
-            # 获取用户ID
-            user_id = self.message.user_info.user_id if self.message.user_info else ""
-            if not user_id:
-                await self.send_text("❌ 无法识别用户")
-                return True, "用户ID缺失", True
+            # 获取人格ID（淫乱度作用在AI人格上）
+            try:
+                from src.plugin_system.apis import person_api
+                if not self.message.user_info:
+                    await self.send_text("❌ 无法识别用户")
+                    return True, "用户信息缺失", True
+                platform = self.message.user_info.platform
+                qq_user_id = self.message.user_info.user_id
+                person_id = person_api.get_person_id_sync(platform, qq_user_id)
+                if not person_id:
+                    await self.send_text("❌ 无法获取人格ID")
+                    return True, "person_id缺失", True
+            except Exception as e:
+                logger.error(f"获取person_id失败: {e}")
+                await self.send_text("❌ 系统错误")
+                return True, "获取person_id失败", True
             
             # 获取当前月经周期状态
             try:
@@ -366,7 +386,7 @@ class LustEndCommand(PlusCommand):
                 period_state = None
             
             # 重置会话（传递period_state以正确计算淫乱度）
-            self.lust_system.reset_session(str(user_id), period_state)
+            self.lust_system.reset_session(person_id, period_state)
             await self.send_text("✅ 淫乱度会话已重置，高潮值、阶段、连续低评分计数等已清零。")
             
             return True, "重置淫乱度会话", True

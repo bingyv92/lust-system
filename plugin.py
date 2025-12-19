@@ -64,9 +64,9 @@ class MofoxPeriodPlugin(BasePlugin):
     config_file_name = "config.toml"
     
     # 配置Schema定义 - 从 config_schema.py 导入
-    config_schema = CONFIG_SCHEMA
+    config_schema: Dict[str, Any] = CONFIG_SCHEMA  # type: ignore
     
-    def get_plugin_components(self) -> List[Tuple[ComponentInfo, Type]]:
+    def get_plugin_components(self):
         """注册插件组件"""
         components = []
         
@@ -97,48 +97,27 @@ class MofoxPeriodPlugin(BasePlugin):
         super().__init__(*args, **kwargs)
         self._ensure_config_compatibility()
     
+    async def on_plugin_loaded(self):
+        """插件加载完成后的回调"""
+        try:
+            logger.info("插件已加载，开始数据完整性检查...")
+            
+            # 修复旧数据
+            from core.lust_system import LustSystem
+            from core.data_fixer import fix_all_lust_data
+            
+            lust_system = LustSystem(self.get_config)
+            fix_all_lust_data(lust_system)
+            
+        except Exception as e:
+            logger.error(f"插件加载后处理失败: {e}", exc_info=True)
+    
     def _ensure_config_compatibility(self):
         """确保配置向后兼容"""
         try:
-            # 检查并升级配置版本
-            current_version = self.get_config("plugin.config_version", "1.0.0")
-            if current_version == "1.0.0":
-                logger.info("检测到旧版本配置，正在升级...")
-                
-                # 设置新版本号
-                self.set_config("plugin.config_version", "1.1.0")
-                
-                # 确保KFC集成配置存在
-                if not self.has_config("kfc_integration.enabled"):
-                    self.set_config("kfc_integration.enabled", True)
-                    logger.info("添加KFC集成配置")
-                
-                if not self.has_config("kfc_integration.mode"):
-                    self.set_config("kfc_integration.mode", "unified")
-                    logger.info("添加KFC模式配置")
-                
-                if not self.has_config("kfc_integration.priority"):
-                    self.set_config("kfc_integration.priority", 100)
-                    logger.info("添加KFC优先级配置")
-                
-                # 确保其他新配置项存在
-                if not self.has_config("plugin.debug_mode"):
-                    self.set_config("plugin.debug_mode", False)
-                    logger.info("添加调试模式配置")
-                
-                if not self.has_config("cycle.auto_detect"):
-                    self.set_config("cycle.auto_detect", True)
-                    logger.info("添加自动检测配置")
-                
-                if not self.has_config("backup.auto_backup"):
-                    self.set_config("backup.auto_backup", True)
-                    logger.info("添加自动备份配置")
-                
-                if not self.has_config("backup.backup_days"):
-                    self.set_config("backup.backup_days", 30)
-                    logger.info("添加备份天数配置")
-                
-                logger.info("配置升级完成")
+            # 配置会通过 config_schema 和 config.toml 自动加载
+            # BasePlugin 不支持运行时修改配置，只能读取
+            logger.info("配置兼容性检查完成")
             
             # 验证关键配置项
             self._validate_critical_configs()
@@ -152,8 +131,7 @@ class MofoxPeriodPlugin(BasePlugin):
             # 验证锚点日期（双周期锚定模型）
             anchor_day = self.get_config("cycle.anchor_day", 15)
             if not isinstance(anchor_day, int) or anchor_day < 1 or anchor_day > 31:
-                logger.warning(f"锚点日期配置无效: {anchor_day}，使用默认值15")
-                self.set_config("cycle.anchor_day", 15)
+                logger.warning(f"锚点日期配置无效: {anchor_day}，请在config.toml中修改")
             
             # 验证等级配置值（1-10整数）
             for stage in ["menstrual", "follicular", "ovulation", "luteal"]:
@@ -161,20 +139,17 @@ class MofoxPeriodPlugin(BasePlugin):
                     key = f"levels.{stage}_{level_type}"
                     value = self.get_config(key, 5)
                     if not isinstance(value, int) or value < 1 or value > 10:
-                        logger.warning(f"等级配置无效: {key}={value}，使用默认值5")
-                        self.set_config(key, 5)
+                        logger.warning(f"等级配置无效: {key}={value}，请在config.toml中修改")
             
             # 验证KFC模式
             kfc_mode = self.get_config("kfc_integration.mode", "unified")
             if kfc_mode not in ["unified", "split"]:
-                logger.warning(f"KFC模式配置无效: {kfc_mode}，使用默认值unified")
-                self.set_config("kfc_integration.mode", "unified")
+                logger.warning(f"KFC模式配置无效: {kfc_mode}，请在config.toml中修改")
             
             # 验证优先级
             priority = self.get_config("kfc_integration.priority", 100)
             if not isinstance(priority, int) or priority < 0 or priority > 1000:
-                logger.warning(f"KFC优先级配置无效: {priority}，使用默认值100")
-                self.set_config("kfc_integration.priority", 100)
+                logger.warning(f"KFC优先级配置无效: {priority}，请在config.toml中修改")
             
             logger.info("关键配置验证完成")
             

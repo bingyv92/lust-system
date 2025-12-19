@@ -256,8 +256,8 @@ class PeriodStatePrompt(BasePrompt):
                     # 创建LustSystem实例并获取淫乱度调整（只读模式）
                     lust_system = LustSystem(self.get_config)
                     
-                    # 获取用户数据以判断阶段（传递period_state用于初始化）
-                    user_data = lust_system.get_user_data(person_id, state)
+                    # 获取用户数据以判断阶段（使用只读方法，不修改存储）
+                    user_data = lust_system.get_user_data_readonly(person_id, state)
                     user_stage = user_data.get("current_stage", "")
                     
                     lust_adjustment = lust_system.get_sexual_guidance_for_prompt(person_id, state)
