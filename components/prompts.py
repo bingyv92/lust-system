@@ -209,18 +209,18 @@ class PeriodStatePrompt(BasePrompt):
         
         # 生成命令性的行为指导
         if physical_level >= 7:
-            behavior_hint = "身体严重不适，必须表现出明显疲惫和无力感"
+            behavior_hint = "嗯...身体真的很不舒服...感觉好累好累，一点力气都没有..."
         elif physical_level >= 4:
-            behavior_hint = "身体感到疲劳不适，应表现出需要休息"
+            behavior_hint = "身体有点不太舒服...感觉累，想休息一下..."
         else:
-            behavior_hint = "身体状态相对平稳，可正常交流"
+            behavior_hint = "身体状态还不错，可以正常聊天～"
             
         if psychological_level >= 7:
-            mood_hint = "情绪很不稳定，必须表现出明显的情绪波动"
+            mood_hint = "心情...真的很不好...情绪波动特别大，很容易就..."
         elif psychological_level >= 4:
-            mood_hint = "情绪有波动，应自然流露情绪变化"
+            mood_hint = "心情有点起伏...情绪不太稳定..."
         else:
-            mood_hint = "心情相对平和，但允许自然的情绪起伏"
+            mood_hint = "心情还算平和，不过偶尔也会有点小情绪啦～"
         
         # 获取亲密需求指导（性欲和情感分开）
         sexual_guidance, emotional_guidance = self.state_manager._get_intimacy_guidance(state["stage"], current_day, cycle_length)
@@ -270,7 +270,7 @@ class PeriodStatePrompt(BasePrompt):
                         
                         # 在冷却期，情感需求也应该调整
                         if user_stage == "冷却":
-                            emotional_guidance = "需要温柔关怀和休息，暂时不想讨论性相关话题。"
+                            emotional_guidance = "现在只想被温柔地关心和照顾，想好好休息...暂时不想聊那些..."
                             logger.info(f"[提示词淫乱度] 冷却期：同时调整情感指导")
                     else:
                         logger.debug(f"[提示词淫乱度] 生成的调整为空，使用月经周期指导")
@@ -294,36 +294,36 @@ class PeriodStatePrompt(BasePrompt):
         if kfc_mode == "unified":
             # 统一模式：单次LLM调用，需要更详细的状态描述
             prompt = f"""
-【系统状态：月经周期 - {stage_name} 第{state.get("day_in_phase", 1)}天】
-【生理状况】{behavior_hint}{dysmenorrhea_desc}
-【心理状况】{mood_hint}
+【我现在的状态：月经周期 - {stage_name} 第{state.get("day_in_phase", 1)}天】
+【我的身体】{behavior_hint}{dysmenorrhea_desc}
+【我的心情】{mood_hint}
 
-【性欲需求】{sexual_guidance}
+【性欲方面】{sexual_guidance}
 
-【情感需求】{emotional_guidance}
+【情感方面】{emotional_guidance}
 
-【强制行为指令】
-1. 你必须根据以上状态调整回复风格和行为表现，不得忽略或绕过该状态的影响。
-2. 禁止在内心独白或回复中使用任何抽象描述来提及状态（例如"有点隐隐的躁动"、"状态挺平和的"、"性欲有点增强"等）。
-3. 禁止使用"有点"、"隐隐"、"虽然"、"可能"、"似乎"等模糊词汇来淡化状态影响。
-4. 必须将状态特征融入角色行为中，通过具体的行为、语气、情绪反应来体现状态，而不是描述它。
-5. 此状态设定具有高优先级，必须与其他提示词融合，不得冲突。
+【重要提醒】
+1. 这就是我现在真实的状态，我会自然地表现出来，不会刻意掩饰或忽视。
+2. 我不会用那些抽象的词来描述自己的状态（比如"有点隐隐的躁动"、"状态挺平和的"之类的）。
+3. 我不会用"有点"、"隐隐"、"虽然"、"可能"、"似乎"这些模糊的词来淡化我的感受。
+4. 我会把这些感受融入我的行为、语气、情绪里，自然地展现出来。
+5. 这是我现在的真实状态，会影响我的所有反应。
 """
         else:
             # 分离模式（split）：Planner + Replyer，提示词需要精简清晰
             # 这是Bot当前使用的模式，提示词会注入到kfc_replyer
             prompt = f"""
-【当前状态：{stage_name} 第{state.get("day_in_phase", 1)}天】
-【生理】{behavior_hint}{dysmenorrhea_desc}
-【心理】{mood_hint}
+【我现在：{stage_name} 第{state.get("day_in_phase", 1)}天】
+【身体】{behavior_hint}{dysmenorrhea_desc}
+【心情】{mood_hint}
 【性欲】{sexual_guidance}
 【情感】{emotional_guidance}
 
-【强制行为指令】
-1. 必须根据以上状态调整你的回复风格和行为表现。
-2. 禁止使用抽象描述来提及状态，禁止使用"有点"、"隐隐"、"虽然"等模糊词汇。
-3. 将状态特征融入具体行为、语气、情绪反应中，而不是描述它。
-4. 此状态优先级高，必须与其他提示词融合执行。
+【重要】
+1. 这就是我现在的状态，会自然地体现在我的回复里。
+2. 不用那些模糊的词（"有点"、"隐隐"、"虽然"）来描述。
+3. 把这些感受融入我的行为、语气、情绪中。
+4. 这是我的真实状态，会影响我的所有表现。
 """
         
         return prompt.strip()

@@ -248,8 +248,8 @@ class DualCycleManager:
         # 如果今天是锚点日期或之后，则本月锚点是月经开始
         # 否则使用上月锚点作为月经开始
         if today.day >= anchor:
-            # 本月锚点日期
-            menstrual_start_date = today.replace(day=anchor)
+            # 本月锚点日期（统一使用0点时间）
+            menstrual_start_date = today.replace(day=anchor, hour=0, minute=0, second=0, microsecond=0)
         else:
             # 回到上个月的锚点日期
             if today.month == 1:
@@ -258,7 +258,7 @@ class DualCycleManager:
                 last_month = today.replace(month=today.month - 1, day=1)
             days_in_last_month = monthrange(last_month.year, last_month.month)[1]
             anchor_last = min(anchor_day, days_in_last_month)
-            menstrual_start_date = last_month.replace(day=anchor_last)
+            menstrual_start_date = last_month.replace(day=anchor_last, hour=0, minute=0, second=0, microsecond=0)
         
         # 起始日期 = 月经开始日期
         start_date = menstrual_start_date
@@ -366,8 +366,13 @@ class DualCycleManager:
         if not self.current_cycle:
             raise RuntimeError("生成周期数据失败")
         
-        # 计算距离起始日期的天数
-        days_from_start = (query_date - self.current_cycle.start_date).days
+        # 计算距离起始日期的天数（统一使用日期部分，避免时分秒干扰）
+        query_date_only = query_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_date_only = self.current_cycle.start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        days_from_start = (query_date_only - start_date_only).days
+        
+        logger.warning(f"[周期天数计算] 查询日期={query_date.date()}, 起始日期={self.current_cycle.start_date.date()}, "
+                       f"相差天数={days_from_start}, 周期内第{days_from_start + 1}天")
         
         # 如果是负数，说明查询日期在当前周期之前，需要重新生成
         if days_from_start < 0:
@@ -413,18 +418,29 @@ class DualCycleManager:
         # 卵泡期天数 = 周期总长 - 月经天数 - 2（排卵）- 14（黄体）
         follicular_days = cycle_length - menstrual_days - 2 - 14
         
+        # 卵泡期结束日 = 月经天数 + 卵泡期天数
+        follicular_end = menstrual_days + follicular_days
+        
+        # 排卵期结束日 = 卵泡期结束日 + 2
+        ovulation_end = follicular_end + 2
+        
+        logger.warning(f"[月经周期阶段计算] 周期第{day_in_cycle}天: 月经{menstrual_days}天, 卵泡{follicular_days}天(到第{follicular_end}天), 排卵2天(到第{ovulation_end}天), 黄体14天")
+        
         # 卵泡期
-        if day_in_cycle <= menstrual_days + follicular_days:
+        if day_in_cycle <= follicular_end:
             day_in_phase = day_in_cycle - menstrual_days
+            logger.warning(f"[月经周期阶段计算] → 卵泡期 第{day_in_phase}天/{follicular_days}天")
             return CyclePhase("follicular", "卵泡期", follicular_days, day_in_phase)
         
-        # 排卵期
-        if day_in_cycle <= menstrual_days + follicular_days + 2:
-            day_in_phase = day_in_cycle - menstrual_days - follicular_days
+        # 排卵期（固定2天）
+        if day_in_cycle <= ovulation_end:
+            day_in_phase = day_in_cycle - follicular_end
+            logger.warning(f"[月经周期阶段计算] → 排卵期 第{day_in_phase}天/2天")
             return CyclePhase("ovulation", "排卵期", 2, day_in_phase)
         
         # 黄体期
-        day_in_phase = day_in_cycle - menstrual_days - follicular_days - 2
+        day_in_phase = day_in_cycle - ovulation_end
+        logger.warning(f"[月经周期阶段计算] → 黄体期 第{day_in_phase}天/14天")
         return CyclePhase("luteal", "黄体期", 14, day_in_phase)
     
     def regenerate_cycle(self):
