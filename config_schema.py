@@ -105,8 +105,10 @@ CONFIG_SCHEMA = {
         ),
         "llm_model": ConfigField(
             type=str,
-            default="default",
-            description="缓解判定使用的LLM模型（\"default\" 使用第一个可用模型，或指定模型名称）"
+            default="utils",
+            description="缓解判定使用的LLM模型。支持两种方式：\n"
+                       "1. 任务配置名（如 'utils', 'replyer'）\n"
+                       "2. 具体模型名（如 'deepseek-v3', 'qwen3-14b'）- 对应 model_config.toml 中的 name 字段"
         ),
         "relief_duration_minutes": ConfigField(
             type=int,
@@ -220,9 +222,11 @@ CONFIG_SCHEMA = {
         ),
         "llm_model": ConfigField(
             type=str,
-            default="judge_model",
-            description="用于评分的LLM模型名称（可选），使用系统默认judge模型",
-            example="judge_model"
+            default="utils",
+            description="用于评分的LLM模型。支持两种方式：\n"
+                       "1. 任务配置名（如 'utils', 'replyer'）\n"
+                       "2. 具体模型名（如 'deepseek-v3', 'qwen3-14b'）- 对应 model_config.toml 中的 name 字段",
+            example="deepseek-v3"
         )
     },
     "backup": {

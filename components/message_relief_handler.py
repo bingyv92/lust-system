@@ -104,6 +104,42 @@ class MessageReliefHandler(BaseEventHandler):
         
         return HandlerResult(success=True, continue_process=True)
     
+    def _get_model_config(self, config_key: str, default_value: str = "utils"):
+        """
+        获取模型配置，支持两种方式：
+        1. 任务配置名称（如 "utils", "replyer"）- 从 get_available_models() 获取
+        2. 具体模型名称（如 "deepseek-v3", "qwen3-14b"）- 创建临时 TaskConfig
+        
+        Args:
+            config_key: 配置键名
+            default_value: 默认值
+            
+        Returns:
+            TaskConfig 对象
+        """
+        from src.config.api_ada_configs import TaskConfig
+        
+        model_name = self.get_config(config_key, default_value)
+        models = llm_api.get_available_models()
+        
+        # 方式1: 检查是否是任务配置名称
+        if model_name in models:
+            logger.debug(f"[模型选择] 使用任务配置: {model_name}")
+            return models[model_name]
+        
+        # 方式2: 作为具体模型名称，创建临时 TaskConfig
+        logger.info(f"[模型选择] '{model_name}' 不是任务配置，作为具体模型名称使用")
+        try:
+            temp_config = TaskConfig(
+                model_list=[model_name],
+                temperature=0.3,
+                max_tokens=10
+            )
+            return temp_config
+        except Exception as e:
+            logger.error(f"[模型选择] 创建模型配置失败: {e}，使用默认模型")
+            return next(iter(models.values())) if models else None
+    
     async def _judge_relief_with_llm(self, message_text: str) -> bool:
         """
         使用 LLM API 判断消息是否有缓解作用
@@ -139,23 +175,17 @@ class MessageReliefHandler(BaseEventHandler):
             
             logger.info(f"待判定消息: {message_text}")
             
-            # 获取可用的LLM模型
-            models = llm_api.get_available_models()
-            if not models:
+            # 获取模型配置（支持任务配置名或具体模型名）
+            model_config = self._get_model_config("dysmenorrhea.llm_model", "utils")
+            if not model_config:
                 logger.warning("⚠️ 无可用LLM模型，跳过判定")
                 return False
             
-            # 使用配置的模型或第一个可用模型
-            model_name = self.get_config("dysmenorrhea.llm_model", "default")
-            model_config = models.get(model_name) or next(iter(models.values()))
-            
-            # 获取模型名称
-            actual_model_name = (
-                getattr(model_config, "name", None) or
-                getattr(model_config, "model_name", None) or
-                getattr(model_config, "id", None) or
-                str(model_name)
-            )
+            # 获取模型名称（用于日志）
+            if hasattr(model_config, 'model_list') and model_config.model_list:
+                actual_model_name = model_config.model_list[0]
+            else:
+                actual_model_name = "unknown"
             
             logger.info(f"🤖 使用模型: {actual_model_name}")
             

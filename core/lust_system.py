@@ -188,6 +188,42 @@ class LustSystem:
 
     # ==================== LLM评分 ====================
 
+    def _get_model_config(self, config_key: str, default_value: str = "utils"):
+        """
+        获取模型配置，支持两种方式：
+        1. 任务配置名称（如 "utils", "replyer"）- 从 get_available_models() 获取
+        2. 具体模型名称（如 "deepseek-v3", "qwen3-14b"）- 创建临时 TaskConfig
+        
+        Args:
+            config_key: 配置键名
+            default_value: 默认值
+            
+        Returns:
+            TaskConfig 对象
+        """
+        from src.config.api_ada_configs import TaskConfig
+        
+        model_name = self._get_config(config_key, default_value)
+        models = llm_api.get_available_models()
+        
+        # 方式1: 检查是否是任务配置名称
+        if model_name in models:
+            logger.debug(f"[模型选择] 使用任务配置: {model_name}")
+            return models[model_name]
+        
+        # 方式2: 作为具体模型名称，创建临时 TaskConfig
+        logger.info(f"[模型选择] '{model_name}' 不是任务配置，作为具体模型名称使用")
+        try:
+            temp_config = TaskConfig(
+                model_list=[model_name],
+                temperature=0.3,
+                max_tokens=50
+            )
+            return temp_config
+        except Exception as e:
+            logger.error(f"[模型选择] 创建模型配置失败: {e}，使用默认模型")
+            return next(iter(models.values())) if models else None
+    
     async def score_message_with_llm(self, text: str, lust_level: float) -> float:
         """
         使用LLM对消息内容评分，返回0-10的分数
@@ -202,25 +238,19 @@ class LustSystem:
 
 请只输出一个0-10之间的整数，不要有其他内容。"""
 
-            # 获取可用的LLM模型
-            models = llm_api.get_available_models()
-            if not models:
+            # 获取模型配置（支持任务配置名或具体模型名）
+            model_config = self._get_model_config("lust_system.llm_model", "utils")
+            if not model_config:
                 logger.warning("[LLM评分] 无可用模型，使用【关键词回退方案】")
                 return self._keyword_score(text, lust_level)
-
-            # 尝试使用配置的模型，否则使用第一个可用模型
-            model_name = self._get_config("lust_system.llm_model", "default")
-            model_config = models.get(model_name) or next(iter(models.values()))
             
-            # 尝试多种可能的属性名获取模型名称
-            actual_model_name = (
-                getattr(model_config, "name", None) or
-                getattr(model_config, "model_name", None) or
-                getattr(model_config, "id", None) or
-                getattr(model_config, "model_id", None) or
-                str(model_name)
-            )
-            logger.debug(f"[LLM评分] 模型配置类型: {type(model_config)}, 可用属性: {dir(model_config)[:10]}")
+            # 获取模型名称（用于日志）
+            if hasattr(model_config, 'model_list') and model_config.model_list:
+                actual_model_name = model_config.model_list[0]
+            else:
+                actual_model_name = "unknown"
+            
+            logger.info(f"[LLM评分] 使用模型: {actual_model_name}")
             
             # 调用LLM
             success, response, _, _ = await llm_api.generate_with_model(
@@ -488,6 +518,11 @@ class LustSystem:
             period_state: 当前月经周期状态（可选，用于初始化）
         """
         data = self.get_user_data(user_id, period_state)
+        
+        # ⚠️ 关键修复：在任何计算之前先保存旧值（用于日志输出）
+        # 因为 get_user_data() 可能已经修改了 data["orgasm_value"]
+        old_value_for_log = data.get("orgasm_value", 0)
+        
         now = time.time()
         last_updated = data.get("last_updated", now)
         delta_seconds = max(0, now - last_updated)
@@ -514,13 +549,15 @@ class LustSystem:
         orgasm_value += score * base_score_weight
 
         # 更新数据
-        old_value = data.get("orgasm_value", 0)
         data["orgasm_value"] = orgasm_value
         data["last_updated"] = now
         data["current_stage"] = self._determine_stage(orgasm_value)
         
-        if abs(old_value - orgasm_value) > 1.0:
-            logger.warning(f"[更新高潮值] 用户 {user_id}: {old_value:.1f} -> {orgasm_value:.1f}, score={score:.1f}, decay={decay:.1f}")
+        # 使用之前保存的旧值进行日志输出
+        if abs(old_value_for_log - orgasm_value) > 1.0:
+            logger.warning(f"[更新高潮值] 用户 {user_id}: {old_value_for_log:.1f} -> {orgasm_value:.1f}, "
+                          f"score={score:.1f}×{base_score_weight}={(score*base_score_weight):.1f}, "
+                          f"decay={decay:.1f}, base={old_orgasm:.1f}")
 
         # 检查是否触发高潮
         orgasm_threshold = self._get_config("lust_system.orgasm_threshold", 100.0)

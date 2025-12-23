@@ -172,13 +172,18 @@ class DualCycleManager:
         """从配置文件同步锚点日期到storage"""
         if self.get_config:
             config_anchor = self.get_config("cycle.anchor_day", None)
+            storage_anchor = plugin_storage.get("anchor_day", None)
+            logger.info(f"[配置同步] 配置文件anchor_day={config_anchor}, storage中anchor_day={storage_anchor}")
+            
             if config_anchor is not None:
-                storage_anchor = plugin_storage.get("anchor_day", None)
                 if storage_anchor != config_anchor:
-                    logger.info(f"同步锚点日期: config={config_anchor}, storage={storage_anchor} → {config_anchor}")
+                    logger.warning(f"⚠️ 检测到锚点配置变更: storage={storage_anchor} → config={config_anchor}")
                     plugin_storage.set("anchor_day", config_anchor)
                     # 清除旧的双周期数据，强制重新生成
                     plugin_storage.delete("dual_cycle_data")
+                    logger.info(f"✅ 已同步锚点到storage并清除旧周期数据")
+                else:
+                    logger.debug(f"[配置同步] 锚点一致，无需更新")
     
     def _load_or_generate_cycle(self):
         """
@@ -226,9 +231,15 @@ class DualCycleManager:
                 logger.error(f"加载双周期数据失败: {e}，重新生成")
                 self._generate_new_cycle()
         else:
-            logger.info("首次运行，生成双周期数据并保存")
+            # storage中没有周期数据，可能是首次运行或配置变更后被清除
+            storage_anchor = plugin_storage.get("anchor_day", None)
+            if storage_anchor is None:
+                logger.info(f"[首次运行] 生成双周期数据（锚点={config_anchor}号）")
+            else:
+                logger.info(f"[配置变更] 重新生成双周期数据（锚点={config_anchor}号）")
+            
             self._generate_new_cycle()
-            logger.info(f"✅ 首次周期已生成并保存（锚点={config_anchor}号），之后将使用此固定周期")
+            logger.info(f"✅ 新周期已生成并保存，之后将使用此固定周期")
     
     def _generate_new_cycle(self):
         """
@@ -299,10 +310,11 @@ class DualCycleManager:
             cycle2_menstrual_days=cycle2_menstrual_days
         )
         
-        # 保存到存储
+        # 保存到存储（同时保存anchor_day，确保一致性）
         plugin_storage.set("dual_cycle_data", self.current_cycle.to_dict())
+        plugin_storage.set("anchor_day", anchor_day)
         
-        logger.info(f"生成新双周期（锚点={anchor_day}号=月经开始）: "
+        logger.info(f"✅ 生成新双周期（锚点={anchor_day}号=月经开始）: "
                    f"起始={start_date.date()}, "
                    f"结束={end_date.date()}, "
                    f"周期1={cycle1_length}天(月经{cycle1_menstrual_days}天), "
@@ -353,6 +365,9 @@ class DualCycleManager:
         """
         if query_date is None:
             query_date = datetime.now()
+        
+        # ⚠️ 每次都检查配置是否变更（修复配置更新不生效问题）
+        self._check_config_changes()
         
         # 确保有有效的周期数据
         if not self.current_cycle:
@@ -443,6 +458,34 @@ class DualCycleManager:
         logger.warning(f"[月经周期阶段计算] → 黄体期 第{day_in_phase}天/14天")
         return CyclePhase("luteal", "黄体期", 14, day_in_phase)
     
+    def _check_config_changes(self):
+        """
+        检查配置文件中的锚点日期是否变更
+        如果变更，则清除旧数据并重新生成
+        
+        ⚠️ 修复问题：用户修改配置文件后，系统仍使用旧的锚点日期
+        """
+        if not self.get_config or not self.current_cycle:
+            return
+        
+        # 从配置文件读取当前锚点
+        config_anchor = self.get_config("cycle.anchor_day", 15)
+        
+        # 如果配置锚点与当前周期的锚点不同，重新生成
+        if config_anchor != self.current_cycle.anchor_day:
+            logger.warning(
+                f"⚠️ 检测到配置文件锚点变更: {self.current_cycle.anchor_day}号 → {config_anchor}号\n"
+                f"   原周期: {self.current_cycle.start_date.date()} ~ {self.current_cycle.end_date.date()}\n"
+                f"   正在重新生成周期..."
+            )
+            # 同步到 storage
+            plugin_storage.set("anchor_day", config_anchor)
+            # 清除旧周期数据
+            plugin_storage.delete("dual_cycle_data")
+            # 重新生成
+            self._generate_new_cycle()
+            logger.info(f"✅ 新周期已生成（锚点={config_anchor}号）")
+    
     def regenerate_cycle(self):
         """强制重新生成周期"""
         self._generate_new_cycle()
@@ -477,7 +520,19 @@ class PeriodStateManager:
         """
         today = datetime.now()
         
-        # 如果已经计算过今天的状态，直接返回缓存（除非强制重新计算）
+        # ⚠️ 在返回缓存前，先检查配置是否变更（修复配置更新不生效问题）
+        if not force_recalc and self.last_calculated_date == today.date() and self.current_state:
+            # 检查配置变更（如果配置变了会重新生成周期并清除缓存）
+            old_anchor = self.cycle_manager.current_cycle.anchor_day if self.cycle_manager.current_cycle else None
+            self.cycle_manager._check_config_changes()
+            new_anchor = self.cycle_manager.current_cycle.anchor_day if self.cycle_manager.current_cycle else None
+            
+            # 如果锚点变了，清除缓存强制重新计算
+            if old_anchor != new_anchor:
+                logger.info(f"配置变更导致缓存失效，重新计算状态")
+                force_recalc = True
+        
+        # 如果已经计算过今天的状态，直接返回缓存（除非强制重新计算或配置变更）
         if not force_recalc and self.last_calculated_date == today.date() and self.current_state:
             return self.current_state
         
