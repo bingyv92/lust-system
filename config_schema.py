@@ -106,9 +106,7 @@ CONFIG_SCHEMA = {
         "llm_model": ConfigField(
             type=str,
             default="utils",
-            description="缓解判定使用的LLM模型。支持两种方式：\n"
-                       "1. 任务配置名（如 'utils', 'replyer'）\n"
-                       "2. 具体模型名（如 'deepseek-v3', 'qwen3-14b'）- 对应 model_config.toml 中的 name 字段"
+            description="缓解判定使用的LLM模型。支持: 1)任务配置名(如utils/replyer) 2)具体模型名(如deepseek-v3/qwen3-14b)"
         ),
         "relief_duration_minutes": ConfigField(
             type=int,
@@ -223,9 +221,7 @@ CONFIG_SCHEMA = {
         "llm_model": ConfigField(
             type=str,
             default="utils",
-            description="用于评分的LLM模型。支持两种方式：\n"
-                       "1. 任务配置名（如 'utils', 'replyer'）\n"
-                       "2. 具体模型名（如 'deepseek-v3', 'qwen3-14b'）- 对应 model_config.toml 中的 name 字段",
+            description="用于评分的LLM模型。支持: 1)任务配置名(如utils/replyer) 2)具体模型名(如deepseek-v3/qwen3-14b)",
             example="deepseek-v3"
         )
     },

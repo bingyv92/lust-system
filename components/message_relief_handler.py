@@ -120,6 +120,12 @@ class MessageReliefHandler(BaseEventHandler):
         from src.config.api_ada_configs import TaskConfig
         
         model_name = self.get_config(config_key, default_value)
+        
+        # 类型检查：确保 model_name 是字符串
+        if not isinstance(model_name, str):
+            logger.warning(f"[模型选择] 配置值类型错误: {type(model_name)}，使用默认值")
+            model_name = default_value
+        
         models = llm_api.get_available_models()
         
         # 方式1: 检查是否是任务配置名称
