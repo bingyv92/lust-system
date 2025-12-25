@@ -5,6 +5,7 @@
 from src.plugin_system import BaseEventHandler, EventType
 from src.plugin_system.base.base_event import HandlerResult
 from src.plugin_system.apis import llm_api
+from src.plugin_system.apis.permission_api import permission_api
 from src.common.logger import get_logger
 
 # 导入管理器（延迟导入避免循环依赖）
@@ -77,6 +78,28 @@ class MessageReliefHandler(BaseEventHandler):
             db_message = kwargs.get("message")
             if not db_message or not hasattr(db_message, "processed_plain_text"):
                 logger.debug("跳过缓解判定: 无法获取消息对象或文本内容")
+                return HandlerResult(success=True, continue_process=True)
+            
+            # 权限检查：仅限私聊 + Master用户（防止LLM资源滥用）
+            chat_info = getattr(db_message, "chat_info", None)
+            user_info = getattr(db_message, "user_info", None)
+            
+            # 检查是否为私聊
+            if not chat_info or getattr(chat_info, "chat_type", None) != "private":
+                logger.debug("跳过缓解判定: 非私聊消息")
+                return HandlerResult(success=True, continue_process=True)
+            
+            # 检查是否为Master用户
+            if not user_info or not hasattr(user_info, "user_id"):
+                logger.debug("跳过缓解判定: 无法获取用户信息")
+                return HandlerResult(success=True, continue_process=True)
+            
+            user_id = str(user_info.user_id)
+            platform = getattr(chat_info, "platform", "qq")
+            
+            is_master = await permission_api.is_master(platform, user_id)
+            if not is_master:
+                logger.debug(f"跳过缓解判定: 用户 {user_id} 非Master")
                 return HandlerResult(success=True, continue_process=True)
             
             # 获取消息文本内容

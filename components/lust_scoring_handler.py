@@ -44,13 +44,10 @@ class LustScoringHandler(BaseEventHandler):
             user_id = str(message.user_info.user_id)
             platform = message.chat_info.platform if message.chat_info else "qq"
 
-            # 5. 检查master权限
-            has_permission = await permission_api.check_permission(
-                platform, 
-                user_id, 
-                "plugin.mofox_period.lust_system"
-            )
-            if not has_permission:
+            # 5. 检查是否为Master用户（仅Master可触发淫乱度评分）
+            is_master = await permission_api.is_master(platform, user_id)
+            if not is_master:
+                logger.debug(f"跳过淫乱度评分: 用户 {user_id} 非Master")
                 return HandlerResult(success=True, continue_process=True)
 
             # 6. 获取消息文本

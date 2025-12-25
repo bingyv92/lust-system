@@ -119,6 +119,18 @@ CONFIG_SCHEMA = {
             description="缓解时降低的痛经等级（0-6）"
         )
     },
+    "afc_integration": {
+        "enabled": ConfigField(
+            type=bool,
+            default=True,
+            description="是否启用AFC（Affinity Flow Chatter）集成"
+        ),
+        "include_lust_in_private": ConfigField(
+            type=bool,
+            default=False,
+            description="在私聊场景的AFC中是否包含性欲相关提示词（仅私聊生效，群聊始终不显示）。注意：这与KFC集成独立，适用于不使用KFC只使用AFC的用户"
+        )
+    },
     "kfc_integration": {
         "enabled": ConfigField(
             type=bool,

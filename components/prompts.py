@@ -122,14 +122,12 @@ class PeriodStatePrompt(BasePrompt):
                 if any(kfc_key in target_name for kfc_key in ['kfc', 'kokoro', 'flow', 'chatter', '私聊', '心流']):
                     is_kfc_mode = True
             
-            # 如果启用了KFC集成且检测到KFC模式
+            # 生成提示词
             if kfc_enabled and is_kfc_mode:
-                if debug_mode:
-                    logger.debug(f"检测到KFC模式: {target_prompt}，使用KFC提示词")
+                # KFC模式（包含完整性欲系统）
                 prompt = await self._generate_kfc_prompt(state, kfc_mode)
             else:
-                if debug_mode:
-                    logger.debug(f"使用普通模式提示词: {target_prompt}")
+                # AFC普通模式（无性欲）
                 prompt = self._generate_prompt(state)
             
             if debug_mode:
@@ -141,7 +139,7 @@ class PeriodStatePrompt(BasePrompt):
             logger.error(f"生成周期状态提示词失败: {e}")
             # 返回一个安全的默认提示词
             return "你今天的状态不错，可以自然地交流。"
-            
+    
     def _generate_prompt(self, state: Dict[str, Any]) -> str:
         """根据状态生成提示词（非KFC模式：使用等级化系统）"""
         from core.state_manager import PromptTemplates
@@ -174,7 +172,6 @@ class PeriodStatePrompt(BasePrompt):
         
         prompt = f"""
 【系统状态设定：月经周期】
-你当前处于月经周期的【{stage_name}】阶段 第{state.get("day_in_phase", 1)}天。
 
 【生理状况】{behavior_hint}{dysmenorrhea_desc}
 【心理状况】{mood_hint}
@@ -294,7 +291,7 @@ class PeriodStatePrompt(BasePrompt):
         if kfc_mode == "unified":
             # 统一模式：单次LLM调用，需要更详细的状态描述
             prompt = f"""
-【我现在的状态：月经周期 - {stage_name} 第{state.get("day_in_phase", 1)}天】
+【我现在的状态】
 【我的身体】{behavior_hint}{dysmenorrhea_desc}
 【我的心情】{mood_hint}
 
@@ -313,7 +310,7 @@ class PeriodStatePrompt(BasePrompt):
             # 分离模式（split）：Planner + Replyer，提示词需要精简清晰
             # 这是Bot当前使用的模式，提示词会注入到kfc_replyer
             prompt = f"""
-【我现在：{stage_name} 第{state.get("day_in_phase", 1)}天】
+【我现在的状态】
 【身体】{behavior_hint}{dysmenorrhea_desc}
 【心情】{mood_hint}
 【性欲】{sexual_guidance}
