@@ -4,7 +4,7 @@ from pathlib import Path
 from src.plugin_system.base.base_prompt import BasePrompt
 from src.plugin_system.base.component_types import InjectionRule, InjectionType
 from src.plugin_system.apis import config_api, person_api
-from core.state_manager import get_state_manager
+from core.state_manager import get_state_manager, PromptTemplates
 from core.lust_system import LustSystem
 from src.common.logger import get_logger
 
@@ -89,6 +89,29 @@ class PeriodStatePrompt(BasePrompt):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.state_manager = get_state_manager(get_config_func=self.get_config)
+        # 初始化提示词模板系统（使用相同的配置函数）
+        self.prompt_templates = PromptTemplates(get_config_func=self.get_config)
+    
+    def _load_jailbreak(self) -> str:
+        """加载破甲词内容"""
+        try:
+            # 检查是否启用
+            if not self.get_config("jailbreak.enabled", False):
+                return ""
+            
+            # 直接从配置读取内容
+            content = self.get_config("jailbreak.content", "").strip()
+            
+            if content:
+                logger.info(f"[破甲词] 已加载，长度={len(content)}字符")
+            else:
+                logger.warning("[破甲词] 已启用但内容为空")
+            
+            return content
+            
+        except Exception as e:
+            logger.error(f"[破甲词] 加载失败: {e}")
+            return ""
         
     async def execute(self) -> str:
         """生成周期状态提示词 - 增强KFC支持"""
@@ -112,26 +135,62 @@ class PeriodStatePrompt(BasePrompt):
             # 计算当前状态
             state = self.state_manager.calculate_current_state(cycle_length)
             
-            # 根据目标提示词类型生成不同的提示词
-            target_prompt = getattr(self, 'target_prompt_name', None)
+            # 判断是否为私聊：多重判断确保准确性
+            chat_id = self.params.chat_id or ''
+            target_prompt = getattr(self, 'target_prompt_name', '') or ''
             
-            # 增强KFC模式检测
-            is_kfc_mode = False
-            if target_prompt:
-                target_name = target_prompt.lower()
-                if any(kfc_key in target_name for kfc_key in ['kfc', 'kokoro', 'flow', 'chatter', '私聊', '心流']):
-                    is_kfc_mode = True
+            # 方法1：从 chat_id 判断（最可靠）
+            # chat_id 格式通常是: "platform:id:type" 例如 "qq:123456:group" 或 "qq:789:private"
+            is_private_by_chat_id = None  # None表示无法判断
+            if chat_id:
+                if ':private' in chat_id:
+                    is_private_by_chat_id = True
+                elif ':group' in chat_id:
+                    is_private_by_chat_id = False
+                else:
+                    # 备用：检查是否包含 'group' 关键词
+                    if 'group' in chat_id.lower():
+                        is_private_by_chat_id = False
+            
+            # 方法2：使用参数标志（chat_id为空时的备用）
+            # 重要：只有明确设置为True才当作群聊，否则默认私聊（防止未初始化）
+            is_private_by_flag = not self.params.is_group_chat
+            
+            # 方法3：通过目标提示词推断（最后的备用）
+            is_private_by_target = any(keyword in target_prompt.lower() for keyword in ['kfc', 'private', '私聊'])
+            
+            # 综合判断：优先级 chat_id > flag > target
+            if is_private_by_chat_id is not None:
+                is_private_chat = is_private_by_chat_id
+            else:
+                is_private_chat = is_private_by_flag
+            
+            # 详细调试日志
+            if debug_mode or True:  # 暂时强制开启调试
+                logger.info(f"[聊天类型判断] chat_id={chat_id}")
+                logger.info(f"[聊天类型判断] is_group_chat标志={self.params.is_group_chat}")
+                logger.info(f"[聊天类型判断] 目标提示词={target_prompt}")
+                logger.info(f"[聊天类型判断] 判断结果: {'私聊' if is_private_chat else '群聊'}")
+                logger.info(f"[聊天类型判断] 各方法结果 - chat_id:{is_private_by_chat_id}, flag:{is_private_by_flag}, target:{is_private_by_target}")
             
             # 生成提示词
-            if kfc_enabled and is_kfc_mode:
-                # KFC模式（包含完整性欲系统）
+            if kfc_enabled and is_private_chat:
+                # 私聊模式（无论 AFC 还是 KFC，包含完整性欲系统和破甲词）
                 prompt = await self._generate_kfc_prompt(state, kfc_mode)
+                jailbreak_enabled = self.get_config('jailbreak.enabled', False)
+                has_jailbreak_in_prompt = '你的主人' in prompt or '恋人' in prompt  # 检查破甲词特征
+                logger.info(f"[提示词模式] 私聊增强模式 | 破甲词配置={'启用' if jailbreak_enabled else '禁用'}, 实际注入={'是' if has_jailbreak_in_prompt else '否'}")
+                logger.info(f"[提示词内容] 前100字: {prompt[:100]}...")
             else:
-                # AFC普通模式（无性欲）
+                # 群聊模式（无性欲，无破甲词）
                 prompt = self._generate_prompt(state)
+                logger.info(f"[提示词模式] 群聊标准模式 | kfc_enabled={kfc_enabled}, is_private={is_private_chat}")
             
+            # 调试日志
             if debug_mode:
-                logger.debug(f"周期状态提示词 ({target_prompt}, KFC: {is_kfc_mode}): {prompt}")
+                chat_type = "私聊" if is_private_chat else "群聊"
+                mode_name = "私聊增强模式" if (kfc_enabled and is_private_chat) else "标准模式"
+                logger.debug(f"提示词生成完成: {chat_type} | {mode_name} | 长度={len(prompt)}字符")
             
             return prompt
             
@@ -167,7 +226,7 @@ class PeriodStatePrompt(BasePrompt):
         # 痛经描述（如果有）
         dysmenorrhea_desc = ""
         if dysmenorrhea_level > 0:
-            dysmenorrhea_prompt = PromptTemplates.get_dysmenorrhea_prompt(dysmenorrhea_level)
+            dysmenorrhea_prompt = self.prompt_templates.get_dysmenorrhea_prompt(dysmenorrhea_level)
             dysmenorrhea_desc = f"\n【痛经状况】{dysmenorrhea_prompt}"
         
         prompt = f"""
@@ -201,8 +260,8 @@ class PeriodStatePrompt(BasePrompt):
         cycle_length = state["cycle_length"]
         
         # 获取等级化的客观描述
-        physical_desc = PromptTemplates.get_physical_prompt(physical_level)
-        psychological_desc = PromptTemplates.get_psychological_prompt(psychological_level)
+        physical_desc = self.prompt_templates.get_physical_prompt(physical_level)
+        psychological_desc = self.prompt_templates.get_psychological_prompt(psychological_level)
         
         # 生成命令性的行为指导
         if physical_level >= 7:
@@ -283,15 +342,19 @@ class PeriodStatePrompt(BasePrompt):
         # 痛经描述（如果有）
         dysmenorrhea_desc = ""
         if dysmenorrhea_level > 0:
-            dysmenorrhea_prompt = PromptTemplates.get_dysmenorrhea_prompt(dysmenorrhea_level)
+            dysmenorrhea_prompt = self.prompt_templates.get_dysmenorrhea_prompt(dysmenorrhea_level)
             dysmenorrhea_desc = f"\n【痛经状况】{dysmenorrhea_prompt}"
+        
+        # 加载破甲词（位于最顶部）
+        jailbreak_text = self._load_jailbreak()
+        jailbreak_section = f"{jailbreak_text}\n\n" if jailbreak_text else ""
         
         # 根据Bot的实际KFC模式生成提示词
         # 注意：当前Bot配置使用split模式（Planner + Replyer分离）
         if kfc_mode == "unified":
             # 统一模式：单次LLM调用，需要更详细的状态描述
             prompt = f"""
-【我现在的状态】
+{jailbreak_section}【月经周期状态】
 【我的身体】{behavior_hint}{dysmenorrhea_desc}
 【我的心情】{mood_hint}
 
@@ -310,7 +373,7 @@ class PeriodStatePrompt(BasePrompt):
             # 分离模式（split）：Planner + Replyer，提示词需要精简清晰
             # 这是Bot当前使用的模式，提示词会注入到kfc_replyer
             prompt = f"""
-【我现在的状态】
+{jailbreak_section}【我现在的状态】
 【身体】{behavior_hint}{dysmenorrhea_desc}
 【心情】{mood_hint}
 【性欲】{sexual_guidance}

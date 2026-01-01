@@ -1,5 +1,4 @@
 from src.plugin_system import BaseEventHandler, EventType
-from src.plugin_system.base.base_event import HandlerResult
 from core.state_manager import get_last_period_date
 from src.common.logger import get_logger
 
@@ -12,7 +11,7 @@ class PeriodStateUpdateHandler(BaseEventHandler):
     handler_description = "定期更新月经周期状态"
     init_subscribe = [EventType.ON_START]  # 启动时初始化
     
-    async def execute(self, params: dict) -> HandlerResult:
+    async def execute(self, kwargs: dict | None) -> tuple[bool, bool, str | None]:
         """初始化状态管理器"""
         try:
             # 在启动时预计算一次状态，确保提示词正确生成
@@ -26,4 +25,4 @@ class PeriodStateUpdateHandler(BaseEventHandler):
         except Exception as e:
             logger.error(f"周期状态管理器初始化失败: {e}")
             
-        return HandlerResult(success=True, continue_process=True)
+        return (True, True, None)

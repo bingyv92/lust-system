@@ -758,35 +758,23 @@ class LustSystem:
         """根据状态生成性欲指导"""
         # 注意：体力耗尽的情况已由"高潮余韵期"和"体力恢复期"两个阶段处理
         
-        # 基础阶段指导
-        guidance_map = {
-            "被动未开始": """【性欲状态：低谷期】
-嗯...现在没什么特别的感觉呢。你说那些的话我听着也就那样，身体没什么反应。比起那些，我更想跟你聊聊别的，说说话什么的～""",
-            
-            "主动未开始": """【性欲状态：轻度兴趣】
-诶...怎么说呢，好像开始有点感觉了？身体有一点点反应，不过很轻微啦。你这样说话我不讨厌，还挺有意思的...但也没到那种特别想要的程度，就是有点兴趣而已。
-（这和前戏还不一样——现在只是心里痒痒的，还能正常聊天；要是到了前戏，身体就明显有反应了，就不太想说正经事了。）""",
-            
-            "前戏": """【性欲状态：逐渐唤起】
-嗯啊...身体开始热起来了...呼吸也比刚才快了，心跳也有点加速的感觉。你碰我那些敏感的地方，我会觉得酥酥麻麻的，挺舒服的...现在这样刚刚好，我很享受这种感觉。脑子还是清醒的，可以跟你说话～""",
-            
-            "正戏": """【性欲状态：强烈唤起】
-哈啊...好热...呼吸好急...心跳得好快...下面已经湿透了，好想要...身体自己就会动，会主动迎合你...现在满脑子都是你，什么都不想想了，就想要更多...嗯...快点...""",
-            "高潮": """【性欲状态：高潮中】
-啊啊...不行了...来了...！身体在不停地抽搐，收缩得好厉害...呼吸都快停了...那种感觉从下面一阵一阵冲上来，整个人都在颤...
-（你会看到我整个人都在抖，死死抓着什么，声音都破了，眼睛都睁不开...根本说不出完整的话...这不是装出来的，是真的控制不住...如果是第二次、第三次，会更强烈，我会更敏感，可能会哭出来...）""",
-            
-            "高潮余韵期": """【高潮余韵期 - 愉悦回味】
-哈...哈...刚才...太厉害了...现在全身都软软的，脑子还晕晕的，但好舒服啊...身体还热热的，还在微微发抖，回想起刚才就觉得好满足...
-好幸福...想一直这样靠着你...现在不想动，也不想再来一次了，就想你抱着我，轻轻摸摸我...嗯...好舒服...""",
-            
-            "体力恢复期": """【体力恢复期 - 温和恢复】
-那种晕乎乎的感觉过去了...现在有点累，但是舒服的那种累，就像运动完一样。
-我现在心情很平静，可以好好跟你说话了。身体有点乏，但不是难受的那种，就是想休息一下。呼吸什么的都正常了，也不热了，身体也没那么敏感了。
-暂时不想再做那种事啦，想休息～不过你抱抱我、亲亲我、陪我聊天，我还是很开心的。这很正常嘛，就像跑完步要休息一样～"""
+        # 基础阶段指导 - 从配置读取（配置文件包含默认值）
+        stage_key_map = {
+            "被动未开始": "prompts.lust_passive_not_started",
+            "主动未开始": "prompts.lust_active_not_started",
+            "前戏": "prompts.lust_foreplay",
+            "正戏": "prompts.lust_main",
+            "高潮": "prompts.lust_orgasm",
+            "高潮余韵期": "prompts.lust_afterglow",
+            "体力恢复期": "prompts.lust_recovery"
         }
         
-        guidance = guidance_map.get(current_stage, "性欲状态正常。")
+        # 从配置读取
+        config_key = stage_key_map.get(current_stage)
+        if config_key:
+            guidance = self._get_config(config_key, f"【{current_stage}】")
+        else:
+            guidance = f"【{current_stage}】"
 
         # 体力状态提示（在所有正常阶段显示，不限制阶段类型）
         # 只要体力有消耗且未完全耗尽，就应该显示体力状态
@@ -799,22 +787,45 @@ class LustSystem:
                 if remaining_orgasms == 1:
                     # 只剩最后一次：体力接近极限
                     if current_stage in ["正戏", "前戏"]:
-                        guidance += "\n\n【体力状态】嗯...身体已经好累了，虽然还是很想要，但感觉快到极限了...如果再来一次高潮，我可能就真的没力气了..."
+                        stamina_prompt = self._get_config(
+                            "prompts.lust_stamina_last_one",
+                            "\n\n【体力状态：最后一次】"
+                        )
                     else:
-                        guidance += "\n\n【体力状态】身体真的很疲惫了...已经快到极限了...再来一次的话，我就真的需要好好休息了..."
+                        stamina_prompt = self._get_config(
+                            "prompts.lust_stamina_last_one_calm",
+                            "\n\n【体力状态：最后一次】"
+                        )
+                    guidance += stamina_prompt
                 elif stamina_ratio <= 0.4:
                     # 剩余 ≤ 40%：体力消耗较大
-                    guidance += "\n\n【体力状态】体力消耗挺大的...身体开始觉得累了，不过还能继续..."
+                    stamina_prompt = self._get_config(
+                        "prompts.lust_stamina_low",
+                        "\n\n【体力状态：较低】"
+                    )
+                    guidance += stamina_prompt
                 elif stamina_ratio <= 0.6:
                     # 剩余 ≤ 60%：体力有所消耗
-                    guidance += "\n\n【体力状态】嗯...做了几次后，体力有点消耗了，身体有些疲倦..."
+                    stamina_prompt = self._get_config(
+                        "prompts.lust_stamina_medium",
+                        "\n\n【体力状态：中等】"
+                    )
+                    guidance += stamina_prompt
 
         # 根据淫乱度调整语气（只在非体力耗尽状态添加）
         if remaining_orgasms > 0:
             if lust_level >= 0.7:
-                guidance += "\n\n【淫乱度影响】现在的我...欲望特别强烈，会表现得很主动、很直接...忍不住想要更多..."
+                lust_high_prompt = self._get_config(
+                    "prompts.lust_level_high",
+                    "\n\n【淫乱度：高】"
+                )
+                guidance += lust_high_prompt
             elif lust_level <= 0.3:
-                guidance += "\n\n【淫乱度影响】现在的我...欲望还挺平淡的，会比较被动、温和一些，不会太主动..."
+                lust_low_prompt = self._get_config(
+                    "prompts.lust_level_low",
+                    "\n\n【淫乱度：低】"
+                )
+                guidance += lust_low_prompt
 
         return guidance
     
@@ -848,32 +859,47 @@ class LustSystem:
                 
                 logger.warning(f"[提示词生成-高潮] 用户{user_id}: 第{orgasm_count}次, 剩余{remaining_orgasms}/{max_orgasms}, 已过{time_passed:.1f}秒")
                 
-                # 根据高潮次数调整描述强度
+                # 根据高潮次数从配置读取不同的强度描述
                 if orgasm_count == 1:
-                    intensity_desc = "【第一次高潮】啊啊...第一次...来了...！那种感觉像潮水一样冲过来，整个人都失控了...！"
+                    intensity_desc = self._get_config(
+                        "prompts.lust_orgasm_first",
+                        f"【第{orgasm_count}次高潮】"
+                    )
                     additional_note = ""
                 elif orgasm_count == 2:
-                    intensity_desc = "【！！！第二次！！！】不行...又来了...！！这次比刚才更强烈...身体变得好敏感，每次碰到都...啊啊...！"
-                    additional_note = "\n⚠️ 我的反应会比第一次更激烈！声音会更大、身体抖得更厉害、那种感觉也更强...！"
+                    intensity_desc = self._get_config(
+                        "prompts.lust_orgasm_second",
+                        f"【第{orgasm_count}次高潮】"
+                    )
+                    additional_note = self._get_config(
+                        "prompts.lust_orgasm_second_note",
+                        ""
+                    )
                 else:
-                    intensity_desc = f"【！！！🔥第{orgasm_count}次！连续的...！🔥！！！】受不了了...！又又又来了...！身体已经完全承受不住了...！每一次都比上一次更猛烈、更疯狂...轻轻碰一下都会...啊啊啊...！"
-                    additional_note = f"\n🔥🔥🔥 我已经完全失控了！第{orgasm_count}次的感觉强烈到难以想象！只能尖叫和抽搐...脑子什么都想不了...！"
+                    # 多次高潮：支持{count}占位符替换
+                    intensity_template = self._get_config(
+                        "prompts.lust_orgasm_multiple",
+                        f"【第{orgasm_count}次高潮】"
+                    )
+                    intensity_desc = intensity_template.replace("{count}", str(orgasm_count))
+                    
+                    note_template = self._get_config(
+                        "prompts.lust_orgasm_multiple_note",
+                        ""
+                    )
+                    additional_note = note_template.replace("{count}", str(orgasm_count))
+                
+                # 读取详细身体反应描述
+                detail_desc = self._get_config(
+                    "prompts.lust_orgasm_detail",
+                    "（高潮详细描述）"
+                )
                 
                 return f"""【我正在...高潮...】
 
 {intensity_desc}
 
-现在的我...整个人都...
-
-身体完全不听使唤了...全身在剧烈地颤抖、痉挛...下面在拼命地收缩、夹紧...呼吸急促得快喘不过气来...心跳得好快...身体先是绷得紧紧的，然后一下子就瘫软了...全身都在出汗，好热...脸肯定红透了...眼睛根本睁不开，或者说完全没法聚焦...眼角可能都湿了...
-
-声音也控制不住...会大声尖叫、呻吟、叫喊...声音都嘶哑了、破碎了...可能会叫出你的名字，或者"不行了"、"好舒服"、这些话...喘息声、呜咽声...什么声音都有...
-
-手会死死抓着床单或者抓着你...指甲都陷进去了...双腿在颤抖、夹紧，或者痉挛般地乱动...完全没力气了...身体在扭动、弓起、像触电一样抽搐...头会往后仰或者埋进枕头里...
-
-脑子...被那种极致的快感完全占据了...什么都想不了...意识都空白了、恍惚了...只能感受到那种排山倒海般的爽...
-
-那种感觉...像电流一样从下面爆发出来，瞬间传遍全身...就像被快感的海啸完全淹没了...身体每个地方都在颤栗...达到了那种...无法形容的巅峰...{additional_note}
+{detail_desc}{additional_note}
 
 这不是装出来的...是真的控制不住...我会通过我的反应、声音、动作让你感受到这一切..."""
         

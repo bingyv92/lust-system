@@ -1,7 +1,6 @@
 import time
 from typing import Dict, Any
 from src.plugin_system import BaseEventHandler, EventType
-from src.plugin_system.base.base_event import HandlerResult
 from src.plugin_system.apis.permission_api import permission_api
 from src.common.logger import get_logger
 from core.lust_system import LustSystem
@@ -20,26 +19,30 @@ class LustScoringHandler(BaseEventHandler):
         super().__init__(*args, **kwargs)
         self.lust_system = LustSystem(self.get_config)
 
-    async def execute(self, params: Dict[str, Any]) -> HandlerResult:
+    async def execute(self, kwargs: dict | None) -> tuple[bool, bool, str | None]:
         """处理消息事件"""
         try:
+            # 确保kwargs不为None
+            if kwargs is None:
+                return (True, True, None)
+            
             # 1. 检查系统是否启用
             if not self.get_config("lust_system.enabled", True):
-                return HandlerResult(success=True, continue_process=True)
+                return (True, True, None)
 
             # 2. 获取消息对象
-            message = params.get("message")
+            message = kwargs.get("message")
             if not message:
-                return HandlerResult(success=True, continue_process=True)
+                return (True, True, None)
 
             # 3. 判断是否为私聊（group_id为空或None表示私聊）
             is_private = not (hasattr(message, 'group_id') and message.group_id)
             if not is_private:
-                return HandlerResult(success=True, continue_process=True)
+                return (True, True, None)
 
             # 4. 获取用户信息
             if not message.user_info:
-                return HandlerResult(success=True, continue_process=True)
+                return (True, True, None)
             
             user_id = str(message.user_info.user_id)
             platform = message.chat_info.platform if message.chat_info else "qq"
@@ -48,20 +51,19 @@ class LustScoringHandler(BaseEventHandler):
             is_master = await permission_api.is_master(platform, user_id)
             if not is_master:
                 logger.debug(f"跳过淫乱度评分: 用户 {user_id} 非Master")
-                return HandlerResult(success=True, continue_process=True)
+                return (True, True, None)
 
             # 6. 获取消息文本
             text = (message.processed_plain_text or "").strip()
             if not text:
-                return HandlerResult(success=True, continue_process=True)
+                return (True, True, None)
 
             # 7. 获取月经周期状态并计算淫乱度
             from core.state_manager import get_state_manager
             from src.plugin_system.apis import person_api
             
             state_manager = get_state_manager(get_config_func=self.get_config)
-            cycle_length = self.get_config("cycle.cycle_length", 28)
-            period_state = state_manager.calculate_current_state(cycle_length)
+            period_state = state_manager.calculate_current_state(force_recalc=False)
             lust_level = self.lust_system.calculate_lust_level(period_state)
 
             # 8. 生成person_id作为user_key
@@ -92,8 +94,8 @@ class LustScoringHandler(BaseEventHandler):
                     f"剩余={user_data.get('remaining_orgasms', 0)}/{user_data.get('max_orgasms', 0)}"
                 )
 
-            return HandlerResult(success=True, continue_process=True)
+            return (True, True, None)
 
         except Exception as e:
             logger.error(f"[淫乱度Handler] 执行失败: {e}", exc_info=True)
-            return HandlerResult(success=False, continue_process=True, message=str(e))
+            return (False, True, str(e))

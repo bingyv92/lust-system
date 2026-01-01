@@ -16,6 +16,7 @@ class PeriodStatusCommand(PlusCommand):
     command_description = "查询当前月经周期状态"
     command_aliases: ClassVar[list[str]] = ["period", "月经状态", "周期状态"]
     chat_type_allow = ChatType.PRIVATE  # 只在私聊中使用
+    intercept_message = True  # 拦截消息，不进入后续聊天流程
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -93,16 +94,17 @@ class SetPeriodCommand(PlusCommand):
     command_description = "设置上次月经开始日期 (格式: /set_period YYYY-MM-DD)"
     command_aliases: ClassVar[list[str]] = ["设置月经日期"]
     chat_type_allow = ChatType.PRIVATE  # 只在私聊中使用
+    intercept_message = True  # 拦截消息，不进入后续聊天流程
     
     async def execute(self, args: CommandArgs) -> Tuple[bool, Optional[str], bool]:
         """执行设置月经日期"""
         try:
             # 从参数中获取日期
-            if args.is_empty:
+            if args.is_empty():
                 await self.send_text("❌ 格式错误，请使用: /set_period YYYY-MM-DD")
                 return True, "格式错误", True
             
-            date_str = args.get_first
+            date_str = args.get_first()
             
             # 验证日期格式
             if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
@@ -129,16 +131,17 @@ class SetAnchorDayCommand(PlusCommand):
     command_description = "设置月经周期锚点日期 (格式: /set_anchor 1-31)"
     command_aliases: ClassVar[list[str]] = ["设置锚点", "锚点日期"]
     chat_type_allow = ChatType.PRIVATE  # 只在私聊中使用
+    intercept_message = True  # 拦截消息，不进入后续聊天流程
     
     async def execute(self, args: CommandArgs) -> Tuple[bool, Optional[str], bool]:
         """执行设置锚点日期"""
         try:
             # 从参数中获取日期
-            if args.is_empty:
+            if args.is_empty():
                 await self.send_text("❌ 格式错误，请使用: /set_anchor 1-31 (例如: /set_anchor 15)")
                 return True, "格式错误", True
             
-            day_str = args.get_first
+            day_str = args.get_first()
             
             # 验证是否为整数
             try:
@@ -170,6 +173,7 @@ class RegenerateCycleCommand(PlusCommand):
     command_description = "强制重新生成双周期数据"
     command_aliases: ClassVar[list[str]] = ["重新生成周期", "刷新周期"]
     chat_type_allow = ChatType.PRIVATE  # 只在私聊中使用
+    intercept_message = True  # 拦截消息，不进入后续聊天流程
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -206,6 +210,7 @@ class LustStatusCommand(PlusCommand):
     command_description = "查询当前淫乱度、高潮值、阶段等信息"
     command_aliases: ClassVar[list[str]] = ["lust", "淫乱度状态", "高潮值"]
     chat_type_allow = ChatType.PRIVATE  # 只在私聊中使用
+    intercept_message = True  # 拦截消息，不进入后续聊天流程
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -360,6 +365,7 @@ class LustEndCommand(PlusCommand):
     command_description = "主动结束当前淫乱度会话，重置高潮值"
     command_aliases: ClassVar[list[str]] = ["结束淫乱度"]
     chat_type_allow = ChatType.PRIVATE  # 只在私聊中使用
+    intercept_message = True  # 拦截消息，不进入后续聊天流程
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
