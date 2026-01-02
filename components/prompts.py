@@ -135,43 +135,8 @@ class PeriodStatePrompt(BasePrompt):
             # 计算当前状态
             state = self.state_manager.calculate_current_state(cycle_length)
             
-            # 判断是否为私聊：多重判断确保准确性
-            chat_id = self.params.chat_id or ''
-            target_prompt = getattr(self, 'target_prompt_name', '') or ''
-            
-            # 方法1：从 chat_id 判断（最可靠）
-            # chat_id 格式通常是: "platform:id:type" 例如 "qq:123456:group" 或 "qq:789:private"
-            is_private_by_chat_id = None  # None表示无法判断
-            if chat_id:
-                if ':private' in chat_id:
-                    is_private_by_chat_id = True
-                elif ':group' in chat_id:
-                    is_private_by_chat_id = False
-                else:
-                    # 备用：检查是否包含 'group' 关键词
-                    if 'group' in chat_id.lower():
-                        is_private_by_chat_id = False
-            
-            # 方法2：使用参数标志（chat_id为空时的备用）
-            # 重要：只有明确设置为True才当作群聊，否则默认私聊（防止未初始化）
-            is_private_by_flag = not self.params.is_group_chat
-            
-            # 方法3：通过目标提示词推断（最后的备用）
-            is_private_by_target = any(keyword in target_prompt.lower() for keyword in ['kfc', 'private', '私聊'])
-            
-            # 综合判断：优先级 chat_id > flag > target
-            if is_private_by_chat_id is not None:
-                is_private_chat = is_private_by_chat_id
-            else:
-                is_private_chat = is_private_by_flag
-            
-            # 详细调试日志
-            if debug_mode or True:  # 暂时强制开启调试
-                logger.info(f"[聊天类型判断] chat_id={chat_id}")
-                logger.info(f"[聊天类型判断] is_group_chat标志={self.params.is_group_chat}")
-                logger.info(f"[聊天类型判断] 目标提示词={target_prompt}")
-                logger.info(f"[聊天类型判断] 判断结果: {'私聊' if is_private_chat else '群聊'}")
-                logger.info(f"[聊天类型判断] 各方法结果 - chat_id:{is_private_by_chat_id}, flag:{is_private_by_flag}, target:{is_private_by_target}")
+            # ⚠️ 关键修复：通过 chat_id 反查 chat_stream 获取准确的聊天类型
+            is_private_chat = await self._detect_chat_type()
             
             # 生成提示词
             if kfc_enabled and is_private_chat:
@@ -198,6 +163,76 @@ class PeriodStatePrompt(BasePrompt):
             logger.error(f"生成周期状态提示词失败: {e}")
             # 返回一个安全的默认提示词
             return "你今天的状态不错，可以自然地交流。"
+    
+    async def _detect_chat_type(self) -> bool:
+        """检测聊天类型：True=私聊，False=群聊
+        
+        通过多种方法综合判断，优先级：
+        1. 通过 chat_id 反查 chat_stream.group_info（最准确）
+        2. 使用 params.is_group_chat 标志
+        3. 解析 chat_id 字符串格式
+        4. 默认群聊（安全策略）
+        """
+        # 初始化判断变量
+        is_private_by_stream = None
+        is_private_by_flag = None
+        is_private_by_chat_id = None
+        
+        chat_id = self.params.chat_id or ''
+        
+        # 方法1（最准确）：通过 chat_id 反查 chat_stream
+        if chat_id:
+            try:
+                from src.plugin_system.apis import chat_api
+                chat_stream = await chat_api.get_chat_manager().get_stream(chat_id)
+                if chat_stream:
+                    # 直接检查 group_info 属性（标准方法）
+                    is_private_by_stream = not bool(chat_stream.group_info)
+                    logger.debug(f"[聊天类型判断] 方法1-chat_stream: group_info={'存在' if chat_stream.group_info else '不存在'} → is_private={is_private_by_stream}")
+                else:
+                    logger.warning(f"[聊天类型判断] 无法通过 chat_id={chat_id} 获取 chat_stream")
+            except Exception as e:
+                logger.error(f"[聊天类型判断] 反查 chat_stream 失败: {e}")
+        else:
+            logger.warning(f"[聊天类型判断] chat_id 为空，参数传递异常（platform={self.params.platform}）")
+        
+        # 方法2：使用 is_group_chat 参数标志
+        is_group_flag = getattr(self.params, 'is_group_chat', None)
+        if is_group_flag is not None:
+            is_private_by_flag = not is_group_flag
+            logger.debug(f"[聊天类型判断] 方法2-标志: is_group_chat={is_group_flag} → is_private={is_private_by_flag}")
+        
+        # 方法3：解析 chat_id 字符串
+        if chat_id:
+            if ':private' in chat_id:
+                is_private_by_chat_id = True
+            elif ':group' in chat_id:
+                is_private_by_chat_id = False
+            logger.debug(f"[聊天类型判断] 方法3-chat_id解析: {chat_id} → is_private={is_private_by_chat_id}")
+        
+        # 综合判断：优先级 stream > flag > chat_id > 默认群聊
+        if is_private_by_stream is not None:
+            is_private_chat = is_private_by_stream
+            logger.info(f"[聊天类型判断] 使用方法1(chat_stream)判断结果: {'私聊' if is_private_chat else '群聊'}")
+        elif is_private_by_flag is not None:
+            is_private_chat = is_private_by_flag
+            logger.info(f"[聊天类型判断] 使用方法2(标志)判断结果: {'私聊' if is_private_chat else '群聊'}")
+        elif is_private_by_chat_id is not None:
+            is_private_chat = is_private_by_chat_id
+            logger.info(f"[聊天类型判断] 使用方法3(chat_id)判断结果: {'私聊' if is_private_chat else '群聊'}")
+        else:
+            is_private_chat = False
+            logger.warning(f"[聊天类型判断] 所有方法都无法判断，默认群聊模式（安全策略）")
+        
+        # 详细调试日志
+        target_prompt = getattr(self, 'target_prompt_name', '') or ''
+        logger.info(f"[聊天类型判断] chat_id={chat_id}")
+        logger.info(f"[聊天类型判断] is_group_chat标志={self.params.is_group_chat}")
+        logger.info(f"[聊天类型判断] 目标提示词={target_prompt}")
+        logger.info(f"[聊天类型判断] 判断结果: {'私聊' if is_private_chat else '群聊'}")
+        logger.info(f"[聊天类型判断] 各方法结果 - stream:{is_private_by_stream}, flag:{is_private_by_flag}, chat_id:{is_private_by_chat_id}")
+        
+        return is_private_chat
     
     def _generate_prompt(self, state: Dict[str, Any]) -> str:
         """根据状态生成提示词（非KFC模式：使用等级化系统）"""
